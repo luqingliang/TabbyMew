@@ -1,0 +1,41 @@
+{
+  "schema_version": 2,
+  "log": {
+    "level": "info"
+  },
+  "inbounds": [
+    {
+      "type": "hybrid",
+      "tag": "hybrid-in",
+      "listen": "127.0.0.1",
+      "listen_port": 7890
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "final": "direct",
+    "rules": [
+      {
+        "domain_keyword": [
+          "ads",
+          "tracker"
+        ],
+        "outbound": "block"
+      }
+    ]
+  },
+  "services": {
+    "control_api": {
+      "listen": "127.0.0.1:9090"
+    }
+  }
+}

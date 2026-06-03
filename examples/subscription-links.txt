@@ -1,0 +1,3 @@
+ss://YWVzLTEyOC1nY206ZXhhbXBsZS1wYXNzd29yZA==@example.com:8388#ss-main
+trojan://example-password@trojan.example.com:443?sni=trojan.example.com#trojan-main
+anytls://example-password@anytls.example.com:443?sni=anytls.example.com#anytls-main

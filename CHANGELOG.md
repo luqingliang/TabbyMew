@@ -1,0 +1,39 @@
+# Changelog
+
+All notable user-facing changes should be recorded here before tagging a release.
+
+TabbyMew uses SemVer-style `MAJOR.MINOR.PATCH` versions. Before `1.0.0`, minor versions may include compatibility changes; patch versions are reserved for fixes, documentation, tests, and release process updates.
+
+The public changelog starts from the public repository migration. Work completed
+before the migration is treated as the initial project baseline and is not
+relisted in release notes.
+
+## [Unreleased]
+
+### Added
+
+- Release notes generation from the matching `CHANGELOG.md` version section for future formal GitHub Releases.
+
+### Changed
+
+- Release checklist now requires finalized changelog notes before tagging.
+
+## [0.1.0] - 2026-06-03
+
+### Added
+
+- Public GitHub repository baseline after migration.
+- Automated GitHub Release workflow for `main` snapshots and formal `v*` tags.
+- Formal release version guard that requires the pushed tag to match the version in `Cargo.toml`.
+- macOS and Windows release archives with generated manifests and SHA-256 checksums.
+
+### Changed
+
+- Release workflow official actions now use Node.js 24-compatible versions.
+- Formal release assets are limited to macOS and Windows; Linux packaging remains available for development and CI-adjacent checks.
+- Release gate now targets the `main` branch and the GitHub `Release` workflow.
+- Release checklist now documents the automated snapshot and formal release flow.
+
+### Removed
+
+- Removed the redundant `scripts/smoke.sh` compatibility alias; release gate now calls `scripts/validate.sh` directly.

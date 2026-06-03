@@ -1,0 +1,32 @@
+# Rust build output
+/target/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and runtime output
+*.log
+*.pid
+*.sock
+.tabbymew/
+
+# OS/editor metadata
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Test/coverage/profiling artifacts
+coverage/
+tarpaulin-report.html
+*.profraw
+*.profdata
+
+# Temporary files
+tmp/
+temp/

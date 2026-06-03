@@ -1,0 +1,38 @@
+{
+  "schema_version": 2,
+  "log": {
+    "level": "info"
+  },
+  "inbounds": [
+    {
+      "type": "hybrid",
+      "tag": "hybrid-in",
+      "listen": "127.0.0.1",
+      "listen_port": 7890
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "anytls",
+      "tag": "anytls-out",
+      "server": "example.com",
+      "server_port": 443,
+      "password": "example-password",
+      "tls": {
+        "server_name": "example.com",
+        "insecure": false
+      },
+      "idle_session_check_interval_ms": 30000,
+      "idle_session_timeout_ms": 30000,
+      "min_idle_session": 0
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "final": "anytls-out",
+    "rules": []
+  }
+}

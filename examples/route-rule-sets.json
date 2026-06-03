@@ -1,0 +1,63 @@
+{
+  "schema_version": 2,
+  "log": {
+    "level": "info"
+  },
+  "inbounds": [
+    {
+      "type": "hybrid",
+      "tag": "hybrid-in",
+      "listen": "127.0.0.1",
+      "listen_port": 7890
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "final": "direct",
+    "rule_sets": {
+      "direct-domains": {
+        "type": "domain",
+        "path": "rules/direct-domains.txt"
+      },
+      "direct-suffixes": {
+        "type": "domain-suffix",
+        "path": "rules/direct-domain-suffixes.txt"
+      },
+      "block-keywords": {
+        "type": "domain-keyword",
+        "path": "rules/block-keywords.txt"
+      },
+      "private-cidrs": {
+        "type": "ip-cidr",
+        "path": "rules/private-cidrs.txt"
+      }
+    },
+    "rules": [
+      {
+        "domain_set": "direct-domains",
+        "outbound": "direct"
+      },
+      {
+        "domain_suffix_set": "direct-suffixes",
+        "outbound": "direct"
+      },
+      {
+        "ip_cidr_set": "private-cidrs",
+        "outbound": "direct"
+      },
+      {
+        "domain_keyword_set": "block-keywords",
+        "outbound": "block"
+      }
+    ]
+  }
+}

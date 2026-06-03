@@ -1,0 +1,44 @@
+{
+  "schema_version": 2,
+  "log": {
+    "level": "info"
+  },
+  "dns": {
+    "servers": [
+      "1.1.1.1",
+      "8.8.8.8:53",
+      "2001:4860:4860::8888"
+    ]
+  },
+  "inbounds": [
+    {
+      "type": "hybrid",
+      "tag": "hybrid-in",
+      "listen": "127.0.0.1",
+      "listen_port": 7890,
+      "username": "user",
+      "password": "example-password"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "final": "direct",
+    "rules": [
+      {
+        "domain_suffix": [
+          "ads.example"
+        ],
+        "outbound": "block"
+      }
+    ]
+  }
+}

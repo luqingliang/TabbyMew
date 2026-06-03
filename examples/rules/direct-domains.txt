@@ -1,0 +1,3 @@
+# Exact domains that should use direct routing.
+example.org
+docs.example.net

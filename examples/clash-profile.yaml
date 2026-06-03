@@ -1,0 +1,49 @@
+proxies:
+  - name: ss-yaml
+    type: ss
+    server: ss.example.com
+    port: 8388
+    cipher: aes-128-gcm
+    password: example-password
+  - name: ss2022-yaml
+    type: ss
+    server: ss2022.example.com
+    port: 8389
+    cipher: 2022-blake3-aes-128-gcm
+    password: AAAAAAAAAAAAAAAAAAAAAA==
+  - name: trojan-yaml
+    type: trojan
+    server: trojan.example.com
+    port: 443
+    password: example-trojan-password
+    sni: trojan.example.com
+  - name: unsupported-ws
+    type: ss
+    server: ws.example.com
+    port: 443
+    cipher: aes-128-gcm
+    password: example-password
+    network: ws
+
+proxy-groups:
+  - name: Proxy
+    type: select
+    proxies:
+      - ss-yaml
+      - trojan-yaml
+      - DIRECT
+      - REJECT
+  - name: Auto
+    type: url-test
+    proxies:
+      - ss-yaml
+      - trojan-yaml
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+
+rules:
+  - DOMAIN-SUFFIX,example.com,Proxy
+  - DOMAIN-KEYWORD,ads,REJECT
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - GEOIP,CN,DIRECT
+  - MATCH,Proxy

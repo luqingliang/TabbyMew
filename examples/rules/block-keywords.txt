@@ -1,0 +1,3 @@
+# Domain keywords that should be blocked.
+ads
+tracker

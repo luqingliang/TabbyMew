@@ -1,0 +1,4 @@
+# Domain suffixes that should use direct routing.
+lan
+local
+internal.example

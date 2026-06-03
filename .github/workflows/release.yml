@@ -1,0 +1,146 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup component add clippy rustfmt
+
+      - name: Public readiness audit
+        run: ./scripts/public-readiness-audit.sh
+
+      - name: Validate project
+        run: ./scripts/validate.sh
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            runner: macos-latest
+            script: ./scripts/build-macos-release.sh
+          - platform: windows
+            runner: windows-latest
+            script: ./scripts/build-windows-release.sh
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install stable Rust
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Build release artifact
+        shell: bash
+        run: ${{ matrix.script }}
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-${{ matrix.platform }}
+          path: |
+            target/release-artifacts/*.tar.gz
+            target/release-artifacts/*.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t assets < <(find release-assets -type f \( -name '*.tar.gz' -o -name '*.sha256' \) | LC_ALL=C sort)
+          if ((${#assets[@]} == 0)); then
+            echo "no release assets were downloaded" >&2
+            exit 1
+          fi
+
+          short_sha="${GITHUB_SHA::7}"
+          release_flags=()
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            release_tag="${GITHUB_REF_NAME}"
+            ./scripts/check-release-version.sh "$release_tag"
+            release_title="TabbyMew ${release_tag}"
+            notes_file="$(mktemp)"
+            ./scripts/release-notes.sh "$release_tag" > "$notes_file"
+            {
+              printf '\n---\n\n'
+              printf 'Commit: %s\n' "$GITHUB_SHA"
+              printf 'Workflow: %s\n' "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            } >> "$notes_file"
+          else
+            release_tag="snapshot-main"
+            release_title="TabbyMew snapshot main ${short_sha}"
+            release_flags=(--prerelease --latest=false)
+
+            gh release delete "$release_tag" --yes --cleanup-tag || true
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -f "$release_tag" "$GITHUB_SHA"
+            git push --force origin "refs/tags/${release_tag}"
+
+            notes_file="$(mktemp)"
+            {
+              printf 'Automated snapshot build from `main`.\n\n'
+              printf 'Commit: %s\n' "$GITHUB_SHA"
+              printf 'Workflow: %s\n' "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+              printf '\nThis prerelease tag is moved to the latest successful `main` build.\n'
+            } > "$notes_file"
+          fi
+
+          gh release create "$release_tag" "${assets[@]}" \
+            --title "$release_title" \
+            --notes-file "$notes_file" \
+            "${release_flags[@]}"

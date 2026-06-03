@@ -1,0 +1,31 @@
+{
+  "schema_version": 2,
+  "log": {
+    "level": "info"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "mtu": 1500,
+      "auto_route": false,
+      "ipv6_enabled": false,
+      "dns": "direct",
+      "dns_addr": "8.8.8.8",
+      "bypass": [],
+      "tcp_timeout_seconds": 300,
+      "udp_timeout_seconds": 20,
+      "max_sessions": 1024
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "final": "direct",
+    "rules": []
+  }
+}
