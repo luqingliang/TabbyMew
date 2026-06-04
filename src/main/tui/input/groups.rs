@@ -1,6 +1,9 @@
 use super::*;
 
-pub(super) async fn handle_tui_policy_group_list_selector_key(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
+pub(crate) async fn handle_tui_policy_group_list_selector_key(
+    app: &mut TuiApp,
+    key: KeyEvent,
+) -> Result<()> {
     match key.code {
         KeyCode::Esc => {
             cancel_tui_policy_group_delay(app);
@@ -35,7 +38,10 @@ pub(super) async fn handle_tui_policy_group_list_selector_key(app: &mut TuiApp, 
     Ok(())
 }
 
-pub(super) async fn handle_tui_policy_group_selector_key(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
+pub(crate) async fn handle_tui_policy_group_selector_key(
+    app: &mut TuiApp,
+    key: KeyEvent,
+) -> Result<()> {
     match key.code {
         KeyCode::Esc => {
             cancel_tui_policy_group_delay(app);
@@ -47,7 +53,8 @@ pub(super) async fn handle_tui_policy_group_selector_key(app: &mut TuiApp, key: 
             app.clamp_policy_group_outbound_selection();
         }
         KeyCode::Up => {
-            app.selected_policy_group_outbound = app.selected_policy_group_outbound.saturating_sub(1);
+            app.selected_policy_group_outbound =
+                app.selected_policy_group_outbound.saturating_sub(1);
         }
         KeyCode::Down => {
             let len = app.filtered_policy_group_outbounds().len();
@@ -64,7 +71,8 @@ pub(super) async fn handle_tui_policy_group_selector_key(app: &mut TuiApp, key: 
                 Ok(total) => {
                     app.mode = TuiMode::PolicyGroupSelector;
                     app.clamp_policy_group_outbound_selection();
-                    app.last_message = format!("testing delays for policy group {group}: 0/{total}");
+                    app.last_message =
+                        format!("testing delays for policy group {group}: 0/{total}");
                 }
                 Err(err) => {
                     open_tui_error(app, "Policy Group Delay", err);

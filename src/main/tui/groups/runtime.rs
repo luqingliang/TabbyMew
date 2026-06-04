@@ -1,13 +1,13 @@
 use super::*;
 
 #[derive(Debug, Clone, Copy)]
-pub(super) struct RouteModeOption {
-    pub(super) mode: router::RouteMode,
-    pub(super) name: &'static str,
-    pub(super) summary: &'static str,
+pub(crate) struct RouteModeOption {
+    pub(crate) mode: router::RouteMode,
+    pub(crate) name: &'static str,
+    pub(crate) summary: &'static str,
 }
 
-pub(super) fn route_mode_options() -> &'static [RouteModeOption] {
+pub(crate) fn route_mode_options() -> &'static [RouteModeOption] {
     const OPTIONS: &[RouteModeOption] = &[
         RouteModeOption {
             mode: router::RouteMode::Rule,
@@ -28,9 +28,9 @@ pub(super) fn route_mode_options() -> &'static [RouteModeOption] {
     OPTIONS
 }
 
-pub(super) fn open_tui_route_mode_selector(app: &mut TuiApp) {
+pub(crate) fn open_tui_route_mode_selector(app: &mut TuiApp) {
     let current =
-        current_tui_route_mode(app.control_snapshot.as_ref()).unwrap_or(router::RouteMode::Rule);
+        current_route_mode(app.control_snapshot.as_ref()).unwrap_or(router::RouteMode::Rule);
     app.route_mode_selection = route_mode_options()
         .iter()
         .position(|option| option.mode == current)
@@ -39,18 +39,12 @@ pub(super) fn open_tui_route_mode_selector(app: &mut TuiApp) {
     app.last_message = "select a route mode with Up/Down and press Enter".to_string();
 }
 
-pub(super) fn current_tui_route_mode(control_snapshot: Option<&Value>) -> Option<router::RouteMode> {
-    control_snapshot
-        .and_then(|value| value_str(value, &["routing", "mode"]))
-        .and_then(router::RouteMode::parse)
-}
-
-pub(super) fn open_tui_global_target_selector(app: &mut TuiApp) -> Result<()> {
-    if tui_global_targets(app.control_snapshot.as_ref()).is_empty() {
+pub(crate) fn open_tui_global_target_selector(app: &mut TuiApp) -> Result<()> {
+    if global_targets(app.control_snapshot.as_ref()).is_empty() {
         bail!("global targets are not available; run /restart and check the active config");
     }
     app.global_target_query.clear();
-    let current = current_tui_global_target(app.control_snapshot.as_ref());
+    let current = current_global_target(app.control_snapshot.as_ref());
     app.selected_global_target = app
         .filtered_global_targets()
         .iter()
@@ -62,79 +56,10 @@ pub(super) fn open_tui_global_target_selector(app: &mut TuiApp) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn current_tui_global_target(control_snapshot: Option<&Value>) -> Option<String> {
-    control_snapshot
-        .and_then(|value| value_str(value, &["routing", "global_outbound"]))
-        .map(str::to_string)
-}
-
-pub(super) fn tui_global_targets(control_snapshot: Option<&Value>) -> Vec<String> {
-    control_snapshot
-        .and_then(|value| value_array(value, &["routing", "global_targets"]))
-        .map(|targets| {
-            targets
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-pub(super) fn filtered_tui_global_targets(control_snapshot: Option<&Value>, query: &str) -> Vec<String> {
-    let query = query.trim().to_ascii_lowercase();
-    tui_global_targets(control_snapshot)
-        .into_iter()
-        .filter(|target| query.is_empty() || target.to_ascii_lowercase().contains(&query))
-        .collect()
-}
-
-pub(super) fn resolve_tui_global_target(control_snapshot: Option<&Value>, input: &str) -> Result<String> {
-    let input = input.trim();
-    if input.is_empty() {
-        bail!("global target is required");
-    }
-    let targets = tui_global_targets(control_snapshot);
-    if targets.is_empty() {
-        bail!("global targets are not available; run /restart and check the active config");
-    }
-    if let Some(target) = targets.iter().find(|target| target.as_str() == input) {
-        return Ok(target.clone());
-    }
-    if let Some(target) = targets
-        .iter()
-        .find(|target| target.eq_ignore_ascii_case(input))
-    {
-        return Ok(target.clone());
-    }
-
-    let query = input.to_ascii_lowercase();
-    let matches = targets
-        .iter()
-        .filter(|target| target.to_ascii_lowercase().contains(&query))
-        .collect::<Vec<_>>();
-    match matches.as_slice() {
-        [target] => Ok((*target).clone()),
-        [] => bail!("global target `{input}` is not defined"),
-        _ => bail!("global target `{input}` is ambiguous; refine the target name"),
-    }
-}
-
-pub(super) fn parse_tui_route_mode(args: &str) -> Result<router::RouteMode> {
-    let mut parts = args.split_whitespace();
-    let mode = parts.next().context("route mode is required")?;
-    if parts.next().is_some() {
-        bail!("route mode accepts one value: rule, global, or direct");
-    }
-    match mode.to_ascii_lowercase().as_str() {
-        "r" | "rule" => Ok(router::RouteMode::Rule),
-        "g" | "global" => Ok(router::RouteMode::Global),
-        "d" | "direct" => Ok(router::RouteMode::Direct),
-        _ => bail!("unknown route mode `{mode}`; expected rule, global, or direct"),
-    }
-}
-
-pub(super) async fn tui_set_route_mode(app: &mut TuiApp, mode: router::RouteMode) -> Result<String> {
+pub(crate) async fn tui_set_route_mode(
+    app: &mut TuiApp,
+    mode: router::RouteMode,
+) -> Result<String> {
     app.refresh_status().await?;
     let control = app
         .status
@@ -163,19 +88,9 @@ pub(super) async fn tui_set_route_mode(app: &mut TuiApp, mode: router::RouteMode
     Ok(format_route_mode_switch_output(&response, mode))
 }
 
-pub(super) fn format_route_mode_switch_output(response: &Value, requested: router::RouteMode) -> String {
-    let mode = value_str(response, &["mode"]).unwrap_or_else(|| requested.as_str());
-    let global = value_str(response, &["global_outbound"]).unwrap_or("-");
-    let direct = value_str(response, &["direct_outbound"]).unwrap_or("-");
-    let groups = value_array_len(response, &["policy_groups"]).unwrap_or_default();
-    format!(
-        "route mode: {mode}\nglobal target: {global}\ndirect outbound: {direct}\npolicy groups: {groups}\n"
-    )
-}
-
-pub(super) async fn tui_set_global_target(app: &mut TuiApp, target: &str) -> Result<String> {
+pub(crate) async fn tui_set_global_target(app: &mut TuiApp, target: &str) -> Result<String> {
     app.refresh_status().await?;
-    let before_mode = current_tui_route_mode(app.control_snapshot.as_ref());
+    let before_mode = current_route_mode(app.control_snapshot.as_ref());
     let control =
         app.status.control_api.as_ref().context(
             "TabbyMew service is not running; run /restart before setting global target",
@@ -203,32 +118,11 @@ pub(super) async fn tui_set_global_target(app: &mut TuiApp, target: &str) -> Res
         &response,
         target,
         before_mode,
-        current_tui_route_mode(app.control_snapshot.as_ref()),
+        current_route_mode(app.control_snapshot.as_ref()),
     ))
 }
 
-pub(super) fn format_global_target_switch_output(
-    response: &Value,
-    requested: &str,
-    before_mode: Option<router::RouteMode>,
-    after_mode: Option<router::RouteMode>,
-) -> String {
-    let target = value_str(response, &["global_outbound"]).unwrap_or(requested);
-    let mode = value_str(response, &["mode"])
-        .map(str::to_string)
-        .or_else(|| after_mode.map(|mode| mode.as_str().to_string()))
-        .unwrap_or_else(|| "-".to_string());
-    let mode_note = match (before_mode, after_mode) {
-        (Some(before), Some(after)) if before == after => {
-            format!("unchanged ({})", after.as_str())
-        }
-        (Some(before), Some(after)) => format!("changed {} -> {}", before.as_str(), after.as_str()),
-        _ => mode,
-    };
-    format!("global target: {target}\nroute mode: {mode_note}\n")
-}
-
-pub(super) async fn tui_set_tun_enabled(app: &mut TuiApp, enabled: bool) -> Result<String> {
+pub(crate) async fn tui_set_tun_enabled(app: &mut TuiApp, enabled: bool) -> Result<String> {
     app.refresh_status().await?;
     let control = app
         .status
@@ -257,7 +151,10 @@ pub(super) async fn tui_set_tun_enabled(app: &mut TuiApp, enabled: bool) -> Resu
     Ok(format_tun_switch_output(&response, enabled))
 }
 
-pub(super) async fn tui_set_system_proxy_enabled(app: &mut TuiApp, enabled: bool) -> Result<String> {
+pub(crate) async fn tui_set_system_proxy_enabled(
+    app: &mut TuiApp,
+    enabled: bool,
+) -> Result<String> {
     let response = tui_post_control_json_with_timeout(
         app,
         "/control/api/system-proxy",
@@ -279,7 +176,7 @@ pub(super) async fn tui_set_system_proxy_enabled(app: &mut TuiApp, enabled: bool
     Ok(format_system_proxy_switch_output(snapshot, enabled))
 }
 
-pub(super) async fn tui_set_lan_proxy_enabled(app: &mut TuiApp, enabled: bool) -> Result<String> {
+pub(crate) async fn tui_set_lan_proxy_enabled(app: &mut TuiApp, enabled: bool) -> Result<String> {
     let response = tui_post_control_json_with_timeout(
         app,
         "/control/api/lan-proxy",

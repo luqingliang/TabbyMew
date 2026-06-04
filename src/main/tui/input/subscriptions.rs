@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) async fn handle_tui_subscriptions_key(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
+pub(crate) async fn handle_tui_subscriptions_key(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
     match key.code {
         KeyCode::Esc => {
             app.mode = TuiMode::Dashboard;
@@ -79,7 +79,10 @@ pub(super) async fn handle_tui_subscriptions_key(app: &mut TuiApp, key: KeyEvent
     Ok(())
 }
 
-pub(super) async fn handle_tui_subscription_actions_key(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
+pub(crate) async fn handle_tui_subscription_actions_key(
+    app: &mut TuiApp,
+    key: KeyEvent,
+) -> Result<()> {
     match key.code {
         KeyCode::Esc => {
             app.mode = TuiMode::Subscriptions;
@@ -154,7 +157,7 @@ pub(super) async fn handle_tui_subscription_actions_key(app: &mut TuiApp, key: K
     Ok(())
 }
 
-pub(super) async fn handle_tui_subscription_add_key(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
+pub(crate) async fn handle_tui_subscription_add_key(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
     match key.code {
         KeyCode::Esc => {
             reset_tui_subscription_add_form(app);

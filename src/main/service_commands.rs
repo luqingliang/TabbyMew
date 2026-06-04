@@ -6,6 +6,8 @@ mod config_paths;
 mod doctor;
 #[path = "service_commands/formatting.rs"]
 mod formatting;
+#[path = "service_commands/lifecycle.rs"]
+mod lifecycle;
 #[path = "service_commands/reports.rs"]
 mod reports;
 #[path = "service_commands/status.rs"]
@@ -16,6 +18,6 @@ mod subscriptions;
 mod wait;
 
 use self::{
-    cleanup::*, config_paths::*, doctor::*, formatting::*, reports::*, status::*,
+    cleanup::*, config_paths::*, doctor::*, formatting::*, lifecycle::*, reports::*, status::*,
     subscriptions::*, wait::*,
 };

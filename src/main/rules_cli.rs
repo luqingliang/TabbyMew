@@ -141,7 +141,7 @@ fn control_token_from_state_dir(state_dir: &Path) -> Result<String> {
 }
 
 fn build_cli_custom_route_rule(kind: &str, value: &str, outbound: &str) -> Result<Value> {
-    let kind = normalize_tui_rule_key(kind)?;
+    let kind = normalize_route_rule_key(kind)?;
     if !matches!(
         kind,
         "domain_suffix" | "domain" | "domain_keyword" | "ip_cidr"
@@ -158,7 +158,7 @@ fn build_cli_custom_route_rule(kind: &str, value: &str, outbound: &str) -> Resul
         bail!("rule outbound is required");
     }
     let mut rule = Map::new();
-    push_tui_rule_values(&mut rule, kind, value)?;
+    push_route_rule_values(&mut rule, kind, value)?;
     rule.insert("outbound".to_string(), Value::String(outbound.to_string()));
     Ok(Value::Object(rule))
 }
@@ -177,7 +177,7 @@ fn print_rules_list(response: &Value, filter: Option<&str>, json: bool) -> Resul
     } else {
         print!(
             "{}",
-            format_tui_route_rules_output(Some(&control_snapshot), filter)
+            format_route_rules_output(Some(&control_snapshot), filter)
         );
     }
     Ok(())
@@ -190,15 +190,15 @@ fn print_rules_mutation_result(response: &Value, json: bool) -> Result<()> {
             serde_json::to_string_pretty(&structured_rules_list_json(Some(response), ""))?
         );
     } else {
-        print!("{}", format_tui_route_rules_output(Some(response), ""));
+        print!("{}", format_route_rules_output(Some(response), ""));
     }
     Ok(())
 }
 
 fn structured_rules_list_json(control_snapshot: Option<&Value>, filter: &str) -> Value {
     let filter = filter.trim();
-    let items = tui_route_rule_items(control_snapshot);
-    let visible = filtered_tui_route_rule_items(control_snapshot, filter);
+    let items = route_rule_items(control_snapshot);
+    let visible = filtered_route_rule_items(control_snapshot, filter);
     let custom = items.iter().filter(|item| item.source == "custom").count();
     let subscription = items
         .iter()
@@ -284,7 +284,7 @@ fn format_rules_route_test_output(response: &Value) -> String {
     ));
     if let Some(rule) = response.get("rule") {
         let summary = value_str(rule, &["summary"]).unwrap_or("-");
-        let display = tui_route_rule_display(rule.get("rule"), summary);
+        let display = route_rule_display(rule.get("rule"), summary);
         output.push_str(&format!(
             "  rule: {} {} {} {} => {}\n",
             value_str(rule, &["source"]).unwrap_or("-"),

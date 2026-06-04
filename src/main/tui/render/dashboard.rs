@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn draw_tui_dashboard(frame: &mut Frame<'_>, app: &TuiApp) {
+pub(crate) fn draw_tui_dashboard(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -83,7 +83,7 @@ pub(super) fn draw_tui_dashboard(frame: &mut Frame<'_>, app: &TuiApp) {
     frame.render_widget(footer, chunks[2]);
 }
 
-pub(super) fn tui_dashboard_state_line(app: &TuiApp) -> String {
+pub(crate) fn tui_dashboard_state_line(app: &TuiApp) -> String {
     format!(
         "state: {}  version: {}",
         app.session.state_dir.display(),
@@ -91,7 +91,7 @@ pub(super) fn tui_dashboard_state_line(app: &TuiApp) -> String {
     )
 }
 
-pub(super) fn draw_tui_dashboard_wide(
+pub(crate) fn draw_tui_dashboard_wide(
     frame: &mut Frame<'_>,
     area: Rect,
     summary: &TuiStatusSummary,
@@ -162,7 +162,7 @@ pub(super) fn draw_tui_dashboard_wide(
     render_log_tail(frame, rows[1], log_tail);
 }
 
-pub(super) fn draw_tui_dashboard_narrow(
+pub(crate) fn draw_tui_dashboard_narrow(
     frame: &mut Frame<'_>,
     area: Rect,
     summary: &TuiStatusSummary,

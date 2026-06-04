@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn draw_tui_output(frame: &mut Frame<'_>, app: &TuiApp) {
+pub(crate) fn draw_tui_output(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = frame.area();
     frame.render_widget(Clear, area);
     let chunks = Layout::default()

@@ -1,4 +1,6 @@
-async fn tui_start_service(session: &ShellSession) -> Result<String> {
+use super::*;
+
+pub(crate) async fn tui_start_service(session: &ShellSession) -> Result<String> {
     let cleanup_report = cleanup_service_state(&session.state_dir)?;
     if !cleanup_report.ok {
         let mut output = Vec::new();
@@ -23,7 +25,7 @@ async fn tui_start_service(session: &ShellSession) -> Result<String> {
     Ok(String::from_utf8_lossy(&output).into_owned())
 }
 
-async fn tui_restart_service(session: &ShellSession) -> Result<String> {
+pub(crate) async fn tui_restart_service(session: &ShellSession) -> Result<String> {
     let mut output = String::new();
     output.push_str("stopping service:\n");
     output.push_str(&indent_text(&tui_shutdown_service(session).await?));
@@ -33,7 +35,7 @@ async fn tui_restart_service(session: &ShellSession) -> Result<String> {
     Ok(output)
 }
 
-async fn tui_shutdown_service(session: &ShellSession) -> Result<String> {
+pub(crate) async fn tui_shutdown_service(session: &ShellSession) -> Result<String> {
     match tui_stop_service(session, false).await {
         Ok(output) => Ok(output),
         Err(err) => {
@@ -46,7 +48,7 @@ async fn tui_shutdown_service(session: &ShellSession) -> Result<String> {
     }
 }
 
-async fn tui_stop_service(session: &ShellSession, force: bool) -> Result<String> {
+pub(crate) async fn tui_stop_service(session: &ShellSession, force: bool) -> Result<String> {
     let paths = process_manager::paths(&session.state_dir, None);
     let state = match process_manager::load_state(&paths.state_file) {
         Ok(state) => state,
@@ -115,7 +117,7 @@ async fn tui_stop_service(session: &ShellSession, force: bool) -> Result<String>
     Ok(format!("stopped TabbyMew pid {}\n", state.pid))
 }
 
-async fn try_tui_control_api_stop(
+pub(crate) async fn try_tui_control_api_stop(
     session: &ShellSession,
     state: &ProcessState,
     log_path: Option<&Path>,
@@ -144,18 +146,11 @@ async fn try_tui_control_api_stop(
     )))
 }
 
-fn tui_service_stop_timeout(session: &ShellSession) -> Duration {
+pub(crate) fn tui_service_stop_timeout(session: &ShellSession) -> Duration {
     session.timeout.max(TUI_SERVICE_STOP_TIMEOUT)
 }
 
-fn indent_text(text: &str) -> String {
-    text.lines()
-        .map(|line| format!("  {line}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn tui_log_tail(session: &ShellSession, lines: usize) -> Result<String> {
+pub(crate) fn tui_log_tail(session: &ShellSession, lines: usize) -> Result<String> {
     let paths = process_manager::paths(&session.state_dir, None);
     let log_path = process_manager::load_state(&paths.state_file)
         .map(|state| state.log)
@@ -163,7 +158,11 @@ fn tui_log_tail(session: &ShellSession, lines: usize) -> Result<String> {
     process_manager::read_log_tail(&log_path, lines)
 }
 
-fn tui_dashboard_log_tail(session: &ShellSession, report: &StatusReport, lines: usize) -> String {
+pub(crate) fn tui_dashboard_log_tail(
+    session: &ShellSession,
+    report: &StatusReport,
+    lines: usize,
+) -> String {
     let paths = process_manager::paths(&session.state_dir, None);
     let log_path = report
         .service
@@ -183,7 +182,7 @@ fn tui_dashboard_log_tail(session: &ShellSession, report: &StatusReport, lines: 
     }
 }
 
-fn tui_check_config(session: &ShellSession) -> Result<String> {
+pub(crate) fn tui_check_config(session: &ShellSession) -> Result<String> {
     let config_path = resolve_launch_config_path(session.config.as_ref(), &session.state_dir)?;
     let config = Config::load(&config_path)?;
     validate_runtime_config(&config, config_base_dir(&config_path))?;
@@ -198,25 +197,25 @@ fn tui_check_config(session: &ShellSession) -> Result<String> {
 }
 
 #[derive(Debug, Clone)]
-struct TuiSubscriptionItem {
-    name: String,
-    source: String,
-    url: String,
-    output: String,
-    auto_update: bool,
-    imported: String,
-    last_success: String,
-    next_update: String,
-    warnings: u64,
-    last_error: Option<String>,
-    last_final_url: String,
-    status: String,
-    active: bool,
-    refreshable: bool,
+pub(crate) struct TuiSubscriptionItem {
+    pub(crate) name: String,
+    pub(crate) source: String,
+    pub(crate) url: String,
+    pub(crate) output: String,
+    pub(crate) auto_update: bool,
+    pub(crate) imported: String,
+    pub(crate) last_success: String,
+    pub(crate) next_update: String,
+    pub(crate) warnings: u64,
+    pub(crate) last_error: Option<String>,
+    pub(crate) last_final_url: String,
+    pub(crate) status: String,
+    pub(crate) active: bool,
+    pub(crate) refreshable: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TuiSubscriptionAction {
+pub(crate) enum TuiSubscriptionAction {
     Activate,
     Refresh,
     ToggleAutoUpdate,
@@ -224,11 +223,11 @@ enum TuiSubscriptionAction {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct TuiSubscriptionActionOption {
-    action: TuiSubscriptionAction,
+pub(crate) struct TuiSubscriptionActionOption {
+    pub(crate) action: TuiSubscriptionAction,
 }
 
-fn tui_subscription_actions() -> &'static [TuiSubscriptionActionOption] {
+pub(crate) fn tui_subscription_actions() -> &'static [TuiSubscriptionActionOption] {
     const ACTIONS: &[TuiSubscriptionActionOption] = &[
         TuiSubscriptionActionOption {
             action: TuiSubscriptionAction::Activate,
@@ -246,11 +245,11 @@ fn tui_subscription_actions() -> &'static [TuiSubscriptionActionOption] {
     ACTIONS
 }
 
-fn active_tui_subscription(control_snapshot: Option<&Value>) -> Option<&str> {
+pub(crate) fn active_tui_subscription(control_snapshot: Option<&Value>) -> Option<&str> {
     control_snapshot.and_then(|value| value_str(value, &["subscriptions", "active"]))
 }
 
-fn tui_subscription_items(control_snapshot: Option<&Value>) -> Vec<TuiSubscriptionItem> {
+pub(crate) fn tui_subscription_items(control_snapshot: Option<&Value>) -> Vec<TuiSubscriptionItem> {
     let active = active_tui_subscription(control_snapshot);
     control_snapshot
         .and_then(|value| value_array(value, &["subscriptions", "subscriptions"]))
@@ -306,7 +305,7 @@ fn tui_subscription_items(control_snapshot: Option<&Value>) -> Vec<TuiSubscripti
         .unwrap_or_default()
 }
 
-fn filtered_tui_subscription_items(
+pub(crate) fn filtered_tui_subscription_items(
     control_snapshot: Option<&Value>,
     query: &str,
 ) -> Vec<TuiSubscriptionItem> {
@@ -328,13 +327,13 @@ fn filtered_tui_subscription_items(
         .collect()
 }
 
-fn format_optional_unix(value: Option<u64>) -> String {
+pub(crate) fn format_optional_unix(value: Option<u64>) -> String {
     value
         .map(|value| format!("unix {value}"))
         .unwrap_or_else(|| "never".to_string())
 }
 
-fn format_tui_subscription_detail(item: &TuiSubscriptionItem) -> String {
+pub(crate) fn format_tui_subscription_detail(item: &TuiSubscriptionItem) -> String {
     let mut output = String::new();
     output.push_str(&format!(
         "{}  source={}  active={}  auto_update={}\n",
@@ -357,19 +356,19 @@ fn format_tui_subscription_detail(item: &TuiSubscriptionItem) -> String {
     output
 }
 
-fn selected_tui_subscription_item(app: &TuiApp) -> Option<TuiSubscriptionItem> {
+pub(crate) fn selected_tui_subscription_item(app: &TuiApp) -> Option<TuiSubscriptionItem> {
     app.filtered_subscriptions()
         .get(app.selected_subscription)
         .cloned()
 }
 
-fn selected_tui_subscription_action(app: &TuiApp) -> Option<TuiSubscriptionAction> {
+pub(crate) fn selected_tui_subscription_action(app: &TuiApp) -> Option<TuiSubscriptionAction> {
     tui_subscription_actions()
         .get(app.selected_subscription_action)
         .map(|option| option.action)
 }
 
-fn subscription_action_label(
+pub(crate) fn subscription_action_label(
     action: TuiSubscriptionAction,
     item: Option<&TuiSubscriptionItem>,
 ) -> String {
@@ -387,7 +386,7 @@ fn subscription_action_label(
     }
 }
 
-fn subscription_action_summary(
+pub(crate) fn subscription_action_summary(
     action: TuiSubscriptionAction,
     item: Option<&TuiSubscriptionItem>,
 ) -> String {
@@ -407,7 +406,7 @@ fn subscription_action_summary(
     }
 }
 
-fn open_tui_subscriptions(app: &mut TuiApp, query: &str) {
+pub(crate) fn open_tui_subscriptions(app: &mut TuiApp, query: &str) {
     app.subscription_query = query.trim().to_string();
     app.selected_subscription = 0;
     app.clamp_subscription_selection();
@@ -416,7 +415,7 @@ fn open_tui_subscriptions(app: &mut TuiApp, query: &str) {
     app.last_message = "select a subscription or press + to add one".to_string();
 }
 
-fn open_tui_subscription_actions(app: &mut TuiApp) -> Result<()> {
+pub(crate) fn open_tui_subscription_actions(app: &mut TuiApp) -> Result<()> {
     selected_tui_subscription_item(app).context("no subscription selected")?;
     app.selected_subscription_action = 0;
     app.clamp_subscription_action_selection();
@@ -425,21 +424,21 @@ fn open_tui_subscription_actions(app: &mut TuiApp) -> Result<()> {
     Ok(())
 }
 
-fn open_tui_subscription_add(app: &mut TuiApp) {
+pub(crate) fn open_tui_subscription_add(app: &mut TuiApp) {
     reset_tui_subscription_add_form(app);
     app.clamp_subscription_add_selection();
     app.mode = TuiMode::SubscriptionAdd;
     app.last_message = "enter subscription name and URL or file path".to_string();
 }
 
-fn reset_tui_subscription_add_form(app: &mut TuiApp) {
+pub(crate) fn reset_tui_subscription_add_form(app: &mut TuiApp) {
     app.subscription_add_field = TUI_SUBSCRIPTION_ADD_NAME_FIELD;
     app.subscription_add_name.clear();
     app.subscription_add_url.clear();
     app.subscription_add_auto_update = true;
 }
 
-fn open_tui_error(app: &mut TuiApp, title: &str, err: anyhow::Error) {
+pub(crate) fn open_tui_error(app: &mut TuiApp, title: &str, err: anyhow::Error) {
     let error = format!("{err:#}");
     let error_code = classify_user_error(&error);
     app.output_title = format!("{title} failed");
@@ -452,11 +451,11 @@ fn open_tui_error(app: &mut TuiApp, title: &str, err: anyhow::Error) {
     app.mode = TuiMode::Output;
 }
 
-fn open_tui_subscription_error(app: &mut TuiApp, title: &str, err: anyhow::Error) {
+pub(crate) fn open_tui_subscription_error(app: &mut TuiApp, title: &str, err: anyhow::Error) {
     open_tui_error(app, title, err);
 }
 
-async fn apply_selected_tui_subscription_action(
+pub(crate) async fn apply_selected_tui_subscription_action(
     app: &mut TuiApp,
     action: TuiSubscriptionAction,
 ) -> Result<String> {
@@ -479,7 +478,7 @@ async fn apply_selected_tui_subscription_action(
     }
 }
 
-async fn tui_activate_subscription(app: &mut TuiApp, name: &str) -> Result<String> {
+pub(crate) async fn tui_activate_subscription(app: &mut TuiApp, name: &str) -> Result<String> {
     tui_subscription_post_control_json(
         app,
         "/control/api/subscriptions/activate",
@@ -490,7 +489,7 @@ async fn tui_activate_subscription(app: &mut TuiApp, name: &str) -> Result<Strin
     Ok(format!("subscription {name} activated"))
 }
 
-async fn tui_refresh_subscription(app: &mut TuiApp, name: &str) -> Result<String> {
+pub(crate) async fn tui_refresh_subscription(app: &mut TuiApp, name: &str) -> Result<String> {
     let response = tui_subscription_post_control_json(
         app,
         "/control/api/subscriptions/refresh",
@@ -506,7 +505,7 @@ async fn tui_refresh_subscription(app: &mut TuiApp, name: &str) -> Result<String
         .unwrap_or_else(|| format!("subscription {name} updated")))
 }
 
-async fn tui_refresh_all_subscriptions(app: &mut TuiApp) -> Result<String> {
+pub(crate) async fn tui_refresh_all_subscriptions(app: &mut TuiApp) -> Result<String> {
     let response = tui_subscription_post_control_json(
         app,
         "/control/api/subscriptions/refresh",
@@ -517,7 +516,7 @@ async fn tui_refresh_all_subscriptions(app: &mut TuiApp) -> Result<String> {
     Ok(format_tui_subscription_refresh_outcomes(&response))
 }
 
-async fn tui_set_subscription_auto_update(
+pub(crate) async fn tui_set_subscription_auto_update(
     app: &mut TuiApp,
     name: &str,
     enabled: bool,
@@ -535,7 +534,10 @@ async fn tui_set_subscription_auto_update(
     ))
 }
 
-async fn tui_remove_subscription_from_tui(app: &mut TuiApp, name: &str) -> Result<String> {
+pub(crate) async fn tui_remove_subscription_from_tui(
+    app: &mut TuiApp,
+    name: &str,
+) -> Result<String> {
     tui_subscription_post_control_json(
         app,
         "/control/api/subscriptions/remove",
@@ -546,7 +548,7 @@ async fn tui_remove_subscription_from_tui(app: &mut TuiApp, name: &str) -> Resul
     Ok(format!("subscription {name} removed"))
 }
 
-async fn tui_add_subscription_from_form(app: &mut TuiApp) -> Result<String> {
+pub(crate) async fn tui_add_subscription_from_form(app: &mut TuiApp) -> Result<String> {
     let name = app.subscription_add_name.trim();
     let source = app.subscription_add_url.trim();
     subscription_remote::validate_name(name)?;
@@ -566,9 +568,8 @@ async fn tui_add_subscription_from_form(app: &mut TuiApp) -> Result<String> {
             .await?
         }
         TuiSubscriptionAddSource::LocalFile(path) => {
-            let input = fs::read_to_string(&path).with_context(|| {
-                format!("failed to read subscription file {}", path.display())
-            })?;
+            let input = fs::read_to_string(&path)
+                .with_context(|| format!("failed to read subscription file {}", path.display()))?;
             let filename = path
                 .file_name()
                 .map(|value| value.to_string_lossy().into_owned());
@@ -589,12 +590,12 @@ async fn tui_add_subscription_from_form(app: &mut TuiApp) -> Result<String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum TuiSubscriptionAddSource {
+pub(crate) enum TuiSubscriptionAddSource {
     RemoteUrl(String),
     LocalFile(PathBuf),
 }
 
-fn tui_subscription_add_source(input: &str) -> Result<TuiSubscriptionAddSource> {
+pub(crate) fn tui_subscription_add_source(input: &str) -> Result<TuiSubscriptionAddSource> {
     if input.trim().is_empty() {
         bail!("subscription URL or file path is empty");
     }
@@ -604,17 +605,15 @@ fn tui_subscription_add_source(input: &str) -> Result<TuiSubscriptionAddSource> 
     if let Ok(url) = url::Url::parse(input)
         && url.scheme() == "file"
     {
-        let path = url
-            .to_file_path()
-            .map_err(|_| {
-                anyhow::anyhow!("subscription file URL cannot be converted to a local path")
-            })?;
+        let path = url.to_file_path().map_err(|_| {
+            anyhow::anyhow!("subscription file URL cannot be converted to a local path")
+        })?;
         return Ok(TuiSubscriptionAddSource::LocalFile(path));
     }
     Ok(TuiSubscriptionAddSource::LocalFile(PathBuf::from(input)))
 }
 
-async fn tui_subscription_post_control_json(
+pub(crate) async fn tui_subscription_post_control_json(
     app: &mut TuiApp,
     path: &str,
     body: Value,
@@ -630,7 +629,7 @@ async fn tui_subscription_post_control_json(
     .await
 }
 
-fn format_tui_subscription_apply_report(response: &Value) -> String {
+pub(crate) fn format_tui_subscription_apply_report(response: &Value) -> String {
     let name = value_str(response, &["name"]).unwrap_or("-");
     let action = match value_str(response, &["source"]) {
         Some("uploaded_file") => "imported",
@@ -643,7 +642,7 @@ fn format_tui_subscription_apply_report(response: &Value) -> String {
     format!("subscription {name} {action} ({imported} imported, {warnings} warnings)")
 }
 
-fn format_tui_subscription_refresh_outcomes(response: &Value) -> String {
+pub(crate) fn format_tui_subscription_refresh_outcomes(response: &Value) -> String {
     let Some(outcomes) = response.as_array() else {
         return "subscription update returned an unexpected response".to_string();
     };
@@ -677,7 +676,7 @@ fn format_tui_subscription_refresh_outcomes(response: &Value) -> String {
     output
 }
 
-fn subscription_refresh_has_failure(response: &Value) -> bool {
+pub(crate) fn subscription_refresh_has_failure(response: &Value) -> bool {
     response.as_array().is_some_and(|outcomes| {
         outcomes
             .iter()
@@ -685,7 +684,7 @@ fn subscription_refresh_has_failure(response: &Value) -> bool {
     })
 }
 
-fn first_tui_subscription_refresh_message(response: &Value) -> Option<String> {
+pub(crate) fn first_tui_subscription_refresh_message(response: &Value) -> Option<String> {
     let outcome = response.as_array()?.first()?;
     let name = value_str(outcome, &["name"]).unwrap_or("-");
     let report = outcome.get("report")?;
@@ -698,7 +697,7 @@ fn first_tui_subscription_refresh_message(response: &Value) -> Option<String> {
     ))
 }
 
-fn shell_command_registry() -> &'static [ShellCommandSpec] {
+pub(crate) fn shell_command_registry() -> &'static [ShellCommandSpec] {
     const COMMANDS: &[ShellCommandSpec] = &[
         ShellCommandSpec {
             name: "status",
@@ -866,18 +865,18 @@ fn shell_command_registry() -> &'static [ShellCommandSpec] {
 }
 
 #[cfg(test)]
-fn find_shell_command(name: &str) -> Option<&'static ShellCommandSpec> {
+pub(crate) fn find_shell_command(name: &str) -> Option<&'static ShellCommandSpec> {
     shell_command_registry()
         .iter()
         .find(|command| command.name == name || command.aliases.contains(&name))
 }
 
-struct TuiCommandInvocation {
-    command: &'static ShellCommandSpec,
-    args: String,
+pub(crate) struct TuiCommandInvocation {
+    pub(crate) command: &'static ShellCommandSpec,
+    pub(crate) args: String,
 }
 
-fn selected_shell_invocation(app: &TuiApp) -> Option<TuiCommandInvocation> {
+pub(crate) fn selected_shell_invocation(app: &TuiApp) -> Option<TuiCommandInvocation> {
     let (_, args) = split_command_query(&app.command_query);
     app.filtered_commands()
         .get(app.selected_command)
@@ -889,7 +888,7 @@ fn selected_shell_invocation(app: &TuiApp) -> Option<TuiCommandInvocation> {
 }
 
 #[cfg(test)]
-fn exact_shell_command(query: &str) -> Option<&'static ShellCommandSpec> {
+pub(crate) fn exact_shell_command(query: &str) -> Option<&'static ShellCommandSpec> {
     let query = query.trim().trim_start_matches('/');
     if query.is_empty() {
         None
@@ -898,7 +897,7 @@ fn exact_shell_command(query: &str) -> Option<&'static ShellCommandSpec> {
     }
 }
 
-fn filtered_shell_commands(query: &str) -> Vec<&'static ShellCommandSpec> {
+pub(crate) fn filtered_shell_commands(query: &str) -> Vec<&'static ShellCommandSpec> {
     let query = command_query_name(query);
     let mut commands = shell_command_registry()
         .iter()
@@ -909,11 +908,11 @@ fn filtered_shell_commands(query: &str) -> Vec<&'static ShellCommandSpec> {
     commands
 }
 
-fn command_query_name(query: &str) -> &str {
+pub(crate) fn command_query_name(query: &str) -> &str {
     split_command_query(query).0
 }
 
-fn split_command_query(query: &str) -> (&str, &str) {
+pub(crate) fn split_command_query(query: &str) -> (&str, &str) {
     let query = query.trim().trim_start_matches('/').trim_start();
     match query.find(char::is_whitespace) {
         Some(index) => (&query[..index], query[index..].trim()),
@@ -921,7 +920,7 @@ fn split_command_query(query: &str) -> (&str, &str) {
     }
 }
 
-fn command_help_text(query: Option<&str>) -> String {
+pub(crate) fn command_help_text(query: Option<&str>) -> String {
     let query = query.map(str::trim).filter(|query| !query.is_empty());
     let commands = filtered_shell_commands(query.unwrap_or(""));
     let mut output = String::new();
@@ -949,7 +948,7 @@ fn command_help_text(query: Option<&str>) -> String {
     output
 }
 
-fn shell_command_matches(command: &ShellCommandSpec, query: &str) -> bool {
+pub(crate) fn shell_command_matches(command: &ShellCommandSpec, query: &str) -> bool {
     let query = query.to_ascii_lowercase();
     command.name.contains(&query)
         || command.category.contains(&query)
@@ -957,7 +956,7 @@ fn shell_command_matches(command: &ShellCommandSpec, query: &str) -> bool {
         || command.aliases.iter().any(|alias| alias.contains(&query))
 }
 
-fn shell_command_match_rank(command: &ShellCommandSpec, query: &str) -> u8 {
+pub(crate) fn shell_command_match_rank(command: &ShellCommandSpec, query: &str) -> u8 {
     if query.is_empty() {
         return 0;
     }
@@ -978,7 +977,7 @@ fn shell_command_match_rank(command: &ShellCommandSpec, query: &str) -> u8 {
     }
 }
 
-fn shell_command_visible(command: &ShellCommandSpec) -> bool {
+pub(crate) fn shell_command_visible(command: &ShellCommandSpec) -> bool {
     !matches!(
         command.name,
         "tun-on"

@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) async fn tui_rules_command(app: &mut TuiApp, args: &str) -> Result<String> {
+pub(crate) async fn tui_rules_command(app: &mut TuiApp, args: &str) -> Result<String> {
     let args = args.trim();
     let (verb, rest) = split_first_word(args);
     match verb {
@@ -10,7 +10,7 @@ pub(super) async fn tui_rules_command(app: &mut TuiApp, args: &str) -> Result<St
         Some("help") => Ok(tui_rules_help_text()),
         _ => {
             app.refresh_status().await?;
-            Ok(format_tui_route_rules_output(
+            Ok(format_route_rules_output(
                 app.control_snapshot.as_ref(),
                 args,
             ))
@@ -18,7 +18,7 @@ pub(super) async fn tui_rules_command(app: &mut TuiApp, args: &str) -> Result<St
     }
 }
 
-pub(super) fn tui_rules_help_text() -> String {
+pub(crate) fn tui_rules_help_text() -> String {
     [
         "/rules [filter]",
         "/rules add <match=value...> -> <outbound>",
@@ -33,7 +33,7 @@ pub(super) fn tui_rules_help_text() -> String {
     .join("\n")
 }
 
-pub(super) fn split_first_word(input: &str) -> (Option<&str>, &str) {
+pub(crate) fn split_first_word(input: &str) -> (Option<&str>, &str) {
     let input = input.trim();
     if input.is_empty() {
         return (None, "");
@@ -44,17 +44,17 @@ pub(super) fn split_first_word(input: &str) -> (Option<&str>, &str) {
     }
 }
 
-pub(super) async fn tui_add_route_rule(app: &mut TuiApp, args: &str) -> Result<String> {
+pub(crate) async fn tui_add_route_rule(app: &mut TuiApp, args: &str) -> Result<String> {
     let rule = parse_tui_custom_route_rule(args)?;
     tui_upsert_route_rule(app, None, rule).await
 }
 
-pub(super) async fn tui_add_route_rule_from_form(app: &mut TuiApp) -> Result<String> {
+pub(crate) async fn tui_add_route_rule_from_form(app: &mut TuiApp) -> Result<String> {
     let rule = build_tui_custom_route_rule_from_form(app)?;
     tui_upsert_route_rule(app, app.route_rule_form_id.clone(), rule).await
 }
 
-pub(super) async fn tui_upsert_route_rule(
+pub(crate) async fn tui_upsert_route_rule(
     app: &mut TuiApp,
     id: Option<String>,
     rule: Value,
@@ -68,11 +68,11 @@ pub(super) async fn tui_upsert_route_rule(
     .await?;
     Ok(format!(
         "custom route rule saved\n\n{}",
-        format_tui_route_rules_output(Some(&response), "custom")
+        format_route_rules_output(Some(&response), "custom")
     ))
 }
 
-pub(super) fn build_tui_custom_route_rule_from_form(app: &TuiApp) -> Result<Value> {
+pub(crate) fn build_tui_custom_route_rule_from_form(app: &TuiApp) -> Result<Value> {
     let content = app.route_rule_add_content.trim();
     if content.is_empty() {
         bail!("match content is required");
@@ -81,12 +81,12 @@ pub(super) fn build_tui_custom_route_rule_from_form(app: &TuiApp) -> Result<Valu
     let outbound = selected_tui_route_rule_target(app)
         .context("route target is required; check the active config")?;
     let mut rule = Map::new();
-    push_tui_rule_values(&mut rule, match_kind.key, content)?;
+    push_route_rule_values(&mut rule, match_kind.key, content)?;
     rule.insert("outbound".to_string(), Value::String(outbound));
     Ok(Value::Object(rule))
 }
 
-pub(super) async fn tui_remove_route_rule(app: &mut TuiApp, args: &str) -> Result<String> {
+pub(crate) async fn tui_remove_route_rule(app: &mut TuiApp, args: &str) -> Result<String> {
     app.refresh_status().await?;
     let id = resolve_tui_custom_route_rule_id(app.control_snapshot.as_ref(), args.trim())?;
     let response = tui_post_control_json(
@@ -98,11 +98,11 @@ pub(super) async fn tui_remove_route_rule(app: &mut TuiApp, args: &str) -> Resul
     .await?;
     Ok(format!(
         "custom route rule removed\n\n{}",
-        format_tui_route_rules_output(Some(&response), "")
+        format_route_rules_output(Some(&response), "")
     ))
 }
 
-pub(super) async fn tui_reload_route_rules(app: &mut TuiApp) -> Result<String> {
+pub(crate) async fn tui_reload_route_rules(app: &mut TuiApp) -> Result<String> {
     let response = tui_post_control_json(
         app,
         "/control/api/rules/reload",
@@ -112,11 +112,11 @@ pub(super) async fn tui_reload_route_rules(app: &mut TuiApp) -> Result<String> {
     .await?;
     Ok(format!(
         "route rules reloaded\n\n{}",
-        format_tui_route_rules_output(Some(&response), "")
+        format_route_rules_output(Some(&response), "")
     ))
 }
 
-pub(super) fn parse_tui_custom_route_rule(args: &str) -> Result<Value> {
+pub(crate) fn parse_tui_custom_route_rule(args: &str) -> Result<Value> {
     let args = args.trim();
     if args.is_empty() {
         bail!("custom route rule is required; use /rules help for examples");
@@ -132,12 +132,12 @@ pub(super) fn parse_tui_custom_route_rule(args: &str) -> Result<Value> {
         let (key, value) = token
             .split_once('=')
             .with_context(|| format!("rule term `{token}` must use key=value"))?;
-        let key = normalize_tui_rule_key(key)?;
+        let key = normalize_route_rule_key(key)?;
         if key == "outbound" {
             outbound = Some(value.trim());
             continue;
         }
-        push_tui_rule_values(&mut rule, key, value)?;
+        push_route_rule_values(&mut rule, key, value)?;
         has_match = true;
     }
 
@@ -153,13 +153,13 @@ pub(super) fn parse_tui_custom_route_rule(args: &str) -> Result<Value> {
     Ok(Value::Object(rule))
 }
 
-pub(super) fn split_rule_outbound(args: &str) -> (&str, Option<&str>) {
+pub(crate) fn split_rule_outbound(args: &str) -> (&str, Option<&str>) {
     args.split_once("->")
         .map(|(left, right)| (left.trim(), Some(right.trim())))
         .unwrap_or((args, None))
 }
 
-pub(super) fn normalize_tui_rule_key(key: &str) -> Result<&'static str> {
+pub(crate) fn normalize_route_rule_key(key: &str) -> Result<&'static str> {
     match key.trim().to_ascii_lowercase().replace('-', "_").as_str() {
         "domain" => Ok("domain"),
         "domain_suffix" | "suffix" => Ok("domain_suffix"),
@@ -174,8 +174,12 @@ pub(super) fn normalize_tui_rule_key(key: &str) -> Result<&'static str> {
     }
 }
 
-pub(super) fn push_tui_rule_values(rule: &mut Map<String, Value>, key: &str, value: &str) -> Result<()> {
-    let values = split_tui_rule_values(value)?;
+pub(crate) fn push_route_rule_values(
+    rule: &mut Map<String, Value>,
+    key: &str,
+    value: &str,
+) -> Result<()> {
+    let values = split_route_rule_values(value)?;
     if values.is_empty() {
         bail!("rule key `{key}` has no values");
     }
@@ -212,7 +216,7 @@ pub(super) fn push_tui_rule_values(rule: &mut Map<String, Value>, key: &str, val
     Ok(())
 }
 
-pub(super) fn split_tui_rule_values(value: &str) -> Result<Vec<String>> {
+pub(crate) fn split_route_rule_values(value: &str) -> Result<Vec<String>> {
     let values = value
         .split([',', '|'])
         .map(str::trim)
@@ -225,7 +229,7 @@ pub(super) fn split_tui_rule_values(value: &str) -> Result<Vec<String>> {
     Ok(values)
 }
 
-pub(super) fn resolve_tui_custom_route_rule_id(
+pub(crate) fn resolve_tui_custom_route_rule_id(
     control_snapshot: Option<&Value>,
     input: &str,
 ) -> Result<String> {
@@ -233,7 +237,7 @@ pub(super) fn resolve_tui_custom_route_rule_id(
     if input.is_empty() {
         bail!("custom rule id or rule number is required");
     }
-    let items = tui_route_rule_items(control_snapshot)
+    let items = route_rule_items(control_snapshot)
         .into_iter()
         .filter(|item| item.source == "custom")
         .collect::<Vec<_>>();
@@ -263,7 +267,7 @@ pub(super) fn resolve_tui_custom_route_rule_id(
     }
 }
 
-pub(super) async fn remove_selected_tui_route_rule(app: &mut TuiApp) -> Result<()> {
+pub(crate) async fn remove_selected_tui_route_rule(app: &mut TuiApp) -> Result<()> {
     let items = app.filtered_route_rules();
     let item = items
         .get(app.selected_route_rule)
@@ -276,7 +280,7 @@ pub(super) async fn remove_selected_tui_route_rule(app: &mut TuiApp) -> Result<(
     Ok(())
 }
 
-pub(super) async fn tui_post_control_json(
+pub(crate) async fn tui_post_control_json(
     app: &mut TuiApp,
     path: &str,
     body: Value,
@@ -285,7 +289,7 @@ pub(super) async fn tui_post_control_json(
     tui_post_control_json_with_timeout(app, path, body, action, app.session.timeout).await
 }
 
-pub(super) async fn tui_post_control_json_with_timeout(
+pub(crate) async fn tui_post_control_json_with_timeout(
     app: &mut TuiApp,
     path: &str,
     body: Value,

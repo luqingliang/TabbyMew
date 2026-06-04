@@ -10,18 +10,18 @@ fn resolves_tui_global_targets_from_exact_or_unique_filter() -> Result<()> {
     });
 
     assert_eq!(
-        resolve_tui_global_target(Some(&control_snapshot), "Hong Kong Node")?,
+        resolve_global_target(Some(&control_snapshot), "Hong Kong Node")?,
         "Hong Kong Node"
     );
     assert_eq!(
-        resolve_tui_global_target(Some(&control_snapshot), "hong kong")?,
+        resolve_global_target(Some(&control_snapshot), "hong kong")?,
         "Hong Kong Node"
     );
     assert_eq!(
-        filtered_tui_global_targets(Some(&control_snapshot), "pro"),
+        filtered_global_targets(Some(&control_snapshot), "pro"),
         vec!["Proxy".to_string()]
     );
-    assert!(resolve_tui_global_target(Some(&control_snapshot), "missing").is_err());
+    assert!(resolve_global_target(Some(&control_snapshot), "missing").is_err());
     Ok(())
 }
 
@@ -65,18 +65,18 @@ fn parses_and_formats_tui_route_rule_commands() -> Result<()> {
             ]
         }
     });
-    let output = format_tui_route_rules_output(Some(&control_snapshot), "custom-1");
+    let output = format_route_rules_output(Some(&control_snapshot), "custom-1");
     assert!(output.contains("1 visible / 2 total"));
     assert!(output.contains("custom-1"));
     assert!(output.contains("Domain Suffix"));
     assert!(output.contains("example.com"));
     assert!(output.contains("Fallback"));
-    let items = tui_route_rule_items(Some(&control_snapshot));
+    let items = route_rule_items(Some(&control_snapshot));
     assert_eq!(items[0].match_type, "domain_suffix");
     assert_eq!(items[0].match_kind, "Domain Suffix");
     assert_eq!(items[0].match_content, "example.com");
     assert_eq!(items[0].outbound, "Fallback");
-    let visible = filtered_tui_route_rule_items(Some(&control_snapshot), "ads");
+    let visible = filtered_route_rule_items(Some(&control_snapshot), "ads");
     assert_eq!(visible.len(), 1);
     assert_eq!(visible[0].source, "subscription");
     assert_eq!(visible[0].match_type, "domain_keyword");

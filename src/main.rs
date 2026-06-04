@@ -12,15 +12,18 @@ mod process_manager;
 mod proxy_runtime;
 mod resource_limits;
 mod router;
+#[path = "main/runtime_model.rs"]
+mod runtime_model;
 mod session;
 mod subscription;
 mod subscription_remote;
 mod system_proxy;
+#[path = "main/tui.rs"]
+mod tui;
 
 use std::{
-    borrow::Cow,
     env, fs,
-    io::{self, IsTerminal, Read, Seek, SeekFrom, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::Mutex,
     time::{Duration, Instant},
@@ -30,38 +33,15 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use config::Config;
 use control_client::ControlClient;
-use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
 use process_manager::{ProcessState, ServiceStatus, ServiceStatusKind, StartOptions};
-use ratatui::{
-    Frame, Terminal,
-    backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{
-        Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, TableState, Wrap,
-    },
-};
+use runtime_model::*;
 use serde::Serialize;
 use serde_json::{Map, Value};
-use tokio::{sync::mpsc, task::JoinHandle, time::sleep};
+use tokio::time::sleep;
 use tracing_subscriber::{EnvFilter, fmt::time::ChronoLocal};
+use tui::run_interactive_shell;
 
 const DEFAULT_CONTROL_TIMEOUT_MS: u64 = 1000;
-const TUI_SERVICE_STOP_TIMEOUT: Duration = Duration::from_secs(5);
-const TUI_EXIT_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(4);
-const TUI_ROUTE_RULE_ADD_FIELDS: usize = 3;
-const TUI_ROUTE_RULE_ADD_CONTENT_FIELD: usize = 0;
-const TUI_ROUTE_RULE_ADD_MATCH_FIELD: usize = 1;
-const TUI_ROUTE_RULE_ADD_TARGET_FIELD: usize = 2;
-const TUI_SUBSCRIPTION_ADD_FIELDS: usize = 3;
-const TUI_SUBSCRIPTION_ADD_NAME_FIELD: usize = 0;
-const TUI_SUBSCRIPTION_ADD_URL_FIELD: usize = 1;
-const TUI_SUBSCRIPTION_ADD_AUTO_UPDATE_FIELD: usize = 2;
 
 include!("main/cli.rs");
 
@@ -453,15 +433,14 @@ async fn main() -> Result<()> {
     }
 }
 
-include!("main/tui.rs");
-
 include!("main/rules_cli.rs");
 
 include!("main/runtime_cli.rs");
 
-include!("main/tui_service.rs");
-
 include!("main/service_commands.rs");
+
+#[cfg(test)]
+use tui::*;
 
 #[cfg(test)]
 #[path = "main_tests/mod.rs"]

@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn draw_tui_command_palette(frame: &mut Frame<'_>, app: &TuiApp) {
+pub(crate) fn draw_tui_command_palette(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = centered_rect(76, 72, frame.area());
     frame.render_widget(Clear, area);
     let block = Block::default()

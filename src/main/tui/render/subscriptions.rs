@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn draw_tui_subscriptions(frame: &mut Frame<'_>, app: &TuiApp) {
+pub(crate) fn draw_tui_subscriptions(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = centered_rect(92, 84, frame.area());
     frame.render_widget(Clear, area);
     let block = Block::default()
@@ -118,7 +118,7 @@ pub(super) fn draw_tui_subscriptions(frame: &mut Frame<'_>, app: &TuiApp) {
     frame.render_widget(help, chunks[4]);
 }
 
-pub(super) fn draw_tui_subscription_actions(frame: &mut Frame<'_>, app: &TuiApp) {
+pub(crate) fn draw_tui_subscription_actions(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = centered_rect(56, 36, frame.area());
     frame.render_widget(Clear, area);
     let title = selected_tui_subscription_item(app)
@@ -170,7 +170,7 @@ pub(super) fn draw_tui_subscription_actions(frame: &mut Frame<'_>, app: &TuiApp)
     frame.render_widget(help, chunks[1]);
 }
 
-pub(super) fn draw_tui_subscription_add(frame: &mut Frame<'_>, app: &TuiApp) {
+pub(crate) fn draw_tui_subscription_add(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = tui_subscription_add_area(frame.area());
     frame.render_widget(Clear, area);
     let block = Block::default()
@@ -233,7 +233,7 @@ pub(super) fn draw_tui_subscription_add(frame: &mut Frame<'_>, app: &TuiApp) {
     frame.render_widget(help, chunks[3]);
 }
 
-pub(super) fn tui_subscription_add_field_style(app: &TuiApp, field: usize) -> Style {
+pub(crate) fn tui_subscription_add_field_style(app: &TuiApp, field: usize) -> Style {
     if app.subscription_add_field == field {
         Style::default()
             .fg(Color::Cyan)
@@ -243,7 +243,7 @@ pub(super) fn tui_subscription_add_field_style(app: &TuiApp, field: usize) -> St
     }
 }
 
-pub(super) fn tui_subscription_add_area(area: Rect) -> Rect {
+pub(crate) fn tui_subscription_add_area(area: Rect) -> Rect {
     centered_rect_with_min_size(78, 58, 54, 15, area)
 }
 
@@ -286,7 +286,7 @@ fn tui_subscription_add_input(
     )
 }
 
-pub(super) fn visible_tui_subscription_input_value(
+pub(crate) fn visible_tui_subscription_input_value(
     value: &str,
     width: u16,
 ) -> std::borrow::Cow<'_, str> {

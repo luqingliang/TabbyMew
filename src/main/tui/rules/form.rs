@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn open_tui_route_rules(app: &mut TuiApp, query: &str) {
+pub(crate) fn open_tui_route_rules(app: &mut TuiApp, query: &str) {
     app.route_rule_query = query.trim().to_string();
     app.selected_route_rule = 0;
     app.clamp_route_rule_selection();
@@ -9,14 +9,14 @@ pub(super) fn open_tui_route_rules(app: &mut TuiApp, query: &str) {
     app.last_message = "search route rules or press + to add a custom rule".to_string();
 }
 
-pub(super) fn open_tui_route_rule_add(app: &mut TuiApp) {
+pub(crate) fn open_tui_route_rule_add(app: &mut TuiApp) {
     reset_tui_route_rule_add_form(app);
     app.clamp_route_rule_add_selection();
     app.mode = TuiMode::RouteRuleAdd;
     app.last_message = "enter match content, choose rule and route target".to_string();
 }
 
-pub(super) fn reset_tui_route_rule_add_form(app: &mut TuiApp) {
+pub(crate) fn reset_tui_route_rule_add_form(app: &mut TuiApp) {
     app.route_rule_form_id = None;
     app.route_rule_add_field = TUI_ROUTE_RULE_ADD_CONTENT_FIELD;
     app.route_rule_add_content.clear();
@@ -24,7 +24,7 @@ pub(super) fn reset_tui_route_rule_add_form(app: &mut TuiApp) {
     app.selected_route_rule_target_candidate = app.selected_route_rule_target;
 }
 
-pub(super) fn open_tui_route_rule_actions(app: &mut TuiApp) -> Result<()> {
+pub(crate) fn open_tui_route_rule_actions(app: &mut TuiApp) -> Result<()> {
     let item = selected_tui_route_rule_item(app).context("no route rule selected")?;
     if item.source != "custom" {
         bail!("only custom route rules have edit/delete actions");
@@ -39,7 +39,7 @@ pub(super) fn open_tui_route_rule_actions(app: &mut TuiApp) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn change_tui_route_rule_add_selection(app: &mut TuiApp, delta: isize) {
+pub(crate) fn change_tui_route_rule_add_selection(app: &mut TuiApp, delta: isize) {
     match app.route_rule_add_field {
         TUI_ROUTE_RULE_ADD_MATCH_FIELD => {
             app.selected_route_rule_match_kind = shift_index(
@@ -54,7 +54,7 @@ pub(super) fn change_tui_route_rule_add_selection(app: &mut TuiApp, delta: isize
     app.clamp_route_rule_add_selection();
 }
 
-pub(super) fn shift_index(current: usize, len: usize, delta: isize) -> usize {
+pub(crate) fn shift_index(current: usize, len: usize, delta: isize) -> usize {
     if len == 0 {
         return 0;
     }
@@ -65,26 +65,29 @@ pub(super) fn shift_index(current: usize, len: usize, delta: isize) -> usize {
     }
 }
 
-pub(super) fn selected_tui_route_rule_match_kind(app: &TuiApp) -> TuiRouteRuleMatchKind {
+pub(crate) fn selected_tui_route_rule_match_kind(app: &TuiApp) -> TuiRouteRuleMatchKind {
     tui_route_rule_match_kinds()[app
         .selected_route_rule_match_kind
         .min(tui_route_rule_match_kinds().len() - 1)]
 }
 
-pub(super) fn tui_route_rule_targets(control_snapshot: Option<&Value>) -> Vec<String> {
-    tui_global_targets(control_snapshot)
+pub(crate) fn tui_route_rule_targets(control_snapshot: Option<&Value>) -> Vec<String> {
+    global_targets(control_snapshot)
 }
 
-pub(super) fn filtered_tui_route_rule_targets(control_snapshot: Option<&Value>, query: &str) -> Vec<String> {
-    filtered_tui_global_targets(control_snapshot, query)
+pub(crate) fn filtered_tui_route_rule_targets(
+    control_snapshot: Option<&Value>,
+    query: &str,
+) -> Vec<String> {
+    filtered_global_targets(control_snapshot, query)
 }
 
-pub(super) fn selected_tui_route_rule_target(app: &TuiApp) -> Option<String> {
+pub(crate) fn selected_tui_route_rule_target(app: &TuiApp) -> Option<String> {
     let targets = tui_route_rule_targets(app.control_snapshot.as_ref());
     targets.get(app.selected_route_rule_target).cloned()
 }
 
-pub(super) fn open_tui_route_rule_target_selector(app: &mut TuiApp) -> Result<()> {
+pub(crate) fn open_tui_route_rule_target_selector(app: &mut TuiApp) -> Result<()> {
     let targets = tui_route_rule_targets(app.control_snapshot.as_ref());
     if targets.is_empty() {
         bail!("route targets are not available; run /restart and check the active config");
@@ -97,19 +100,19 @@ pub(super) fn open_tui_route_rule_target_selector(app: &mut TuiApp) -> Result<()
     Ok(())
 }
 
-pub(super) fn selected_tui_route_rule_item(app: &TuiApp) -> Option<TuiRouteRuleItem> {
+pub(crate) fn selected_tui_route_rule_item(app: &TuiApp) -> Option<RouteRuleItem> {
     app.filtered_route_rules()
         .get(app.selected_route_rule)
         .cloned()
 }
 
-pub(super) fn selected_tui_route_rule_action(app: &TuiApp) -> Option<TuiRouteRuleAction> {
+pub(crate) fn selected_tui_route_rule_action(app: &TuiApp) -> Option<TuiRouteRuleAction> {
     tui_route_rule_actions()
         .get(app.selected_route_rule_action)
         .map(|option| option.action)
 }
 
-pub(super) fn open_tui_route_rule_edit(app: &mut TuiApp) -> Result<()> {
+pub(crate) fn open_tui_route_rule_edit(app: &mut TuiApp) -> Result<()> {
     let item = selected_tui_route_rule_item(app).context("no route rule selected")?;
     if item.source != "custom" {
         bail!("only custom route rules can be edited");
@@ -141,7 +144,7 @@ pub(super) fn open_tui_route_rule_edit(app: &mut TuiApp) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn editable_tui_route_rule_match(rule: &Value) -> Result<(usize, String)> {
+pub(crate) fn editable_tui_route_rule_match(rule: &Value) -> Result<(usize, String)> {
     let unsupported = [
         "inbound",
         "network",

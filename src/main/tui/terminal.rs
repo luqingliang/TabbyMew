@@ -1,13 +1,13 @@
 use super::*;
 
-pub(super) fn enter_tui() -> Result<TuiTerminal> {
+pub(crate) fn enter_tui() -> Result<TuiTerminal> {
     enable_raw_mode().context("failed to enable terminal raw mode")?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen).context("failed to enter alternate screen")?;
     Terminal::new(CrosstermBackend::new(stdout)).context("failed to create terminal")
 }
 
-pub(super) fn exit_tui(terminal: &mut TuiTerminal) -> Result<()> {
+pub(crate) fn exit_tui(terminal: &mut TuiTerminal) -> Result<()> {
     disable_raw_mode().context("failed to disable terminal raw mode")?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)
         .context("failed to leave alternate screen")?;
@@ -16,7 +16,7 @@ pub(super) fn exit_tui(terminal: &mut TuiTerminal) -> Result<()> {
         .context("failed to show terminal cursor")
 }
 
-pub(super) fn finish_tui_session(
+pub(crate) fn finish_tui_session(
     tui_result: Result<()>,
     terminal_result: Result<()>,
     shutdown_result: Option<Result<String>>,
@@ -42,7 +42,7 @@ pub(super) fn finish_tui_session(
     }
 }
 
-pub(super) fn should_shutdown_service_after_tui(
+pub(crate) fn should_shutdown_service_after_tui(
     exit_action: Option<TuiExitAction>,
     tui_failed: bool,
     service_started_by_tui: bool,
@@ -50,7 +50,7 @@ pub(super) fn should_shutdown_service_after_tui(
     exit_action == Some(TuiExitAction::StopService) || (tui_failed && service_started_by_tui)
 }
 
-pub(super) async fn run_tui_loop(terminal: &mut TuiTerminal, app: &mut TuiApp) -> Result<()> {
+pub(crate) async fn run_tui_loop(terminal: &mut TuiTerminal, app: &mut TuiApp) -> Result<()> {
     let mut dirty = true;
     loop {
         if drain_tui_policy_group_delay_updates(app) {
@@ -91,7 +91,7 @@ pub(super) async fn run_tui_loop(terminal: &mut TuiTerminal, app: &mut TuiApp) -
     Ok(())
 }
 
-pub(super) fn tui_poll_timeout(app: &TuiApp) -> Duration {
+pub(crate) fn tui_poll_timeout(app: &TuiApp) -> Duration {
     const MAX_POLL: Duration = Duration::from_millis(250);
     const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
@@ -104,7 +104,7 @@ pub(super) fn tui_poll_timeout(app: &TuiApp) -> Duration {
     }
 }
 
-pub(super) async fn handle_tui_key(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
+pub(crate) async fn handle_tui_key(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
     if key.kind == KeyEventKind::Release {
         return Ok(());
     }
@@ -126,7 +126,9 @@ pub(super) async fn handle_tui_key(app: &mut TuiApp, key: KeyEvent) -> Result<()
         TuiMode::CommandPalette => handle_tui_palette_key(app, key).await,
         TuiMode::RouteModeSelector => handle_tui_route_mode_selector_key(app, key).await,
         TuiMode::GlobalTargetSelector => handle_tui_global_target_selector_key(app, key).await,
-        TuiMode::PolicyGroupListSelector => handle_tui_policy_group_list_selector_key(app, key).await,
+        TuiMode::PolicyGroupListSelector => {
+            handle_tui_policy_group_list_selector_key(app, key).await
+        }
         TuiMode::PolicyGroupSelector => handle_tui_policy_group_selector_key(app, key).await,
         TuiMode::RouteRules => handle_tui_route_rules_key(app, key).await,
         TuiMode::RouteRuleActions => handle_tui_route_rule_actions_key(app, key).await,
@@ -140,30 +142,30 @@ pub(super) async fn handle_tui_key(app: &mut TuiApp, key: KeyEvent) -> Result<()
     }
 }
 
-pub(super) fn is_direct_tui_detach_key(app: &TuiApp, key: KeyEvent) -> bool {
+pub(crate) fn is_direct_tui_detach_key(app: &TuiApp, key: KeyEvent) -> bool {
     matches!(app.mode, TuiMode::Dashboard | TuiMode::Output)
         && key.modifiers.is_empty()
         && matches!(key.code, KeyCode::Char('q'))
 }
 
-pub(super) fn is_tui_text_key(key: KeyEvent) -> bool {
+pub(crate) fn is_tui_text_key(key: KeyEvent) -> bool {
     key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT
 }
 
-pub(super) fn is_tui_policy_group_delay_key(key: KeyEvent) -> bool {
+pub(crate) fn is_tui_policy_group_delay_key(key: KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL)
         && matches!(key.code, KeyCode::Char('t') | KeyCode::Char('T'))
 }
 
-pub(super) fn confirm_or_request_tui_detach(app: &mut TuiApp) {
+pub(crate) fn confirm_or_request_tui_detach(app: &mut TuiApp) {
     confirm_or_request_tui_exit_action(app, TuiExitAction::Detach);
 }
 
-pub(super) fn confirm_or_request_tui_stop(app: &mut TuiApp) {
+pub(crate) fn confirm_or_request_tui_stop(app: &mut TuiApp) {
     confirm_or_request_tui_exit_action(app, TuiExitAction::StopService);
 }
 
-pub(super) fn confirm_or_request_tui_exit_action(app: &mut TuiApp, action: TuiExitAction) {
+pub(crate) fn confirm_or_request_tui_exit_action(app: &mut TuiApp, action: TuiExitAction) {
     if tui_exit_confirmation_active_for(app, action) {
         app.exit_action = Some(action);
         app.exit_confirmation = None;
@@ -186,7 +188,7 @@ pub(super) fn confirm_or_request_tui_exit_action(app: &mut TuiApp, action: TuiEx
     app.last_message = tui_exit_confirmation_message(action);
 }
 
-pub(super) fn tui_exit_confirmation_message(action: TuiExitAction) -> String {
+pub(crate) fn tui_exit_confirmation_message(action: TuiExitAction) -> String {
     match action {
         TuiExitAction::Detach => format!(
             "confirm detach: press q again within {}s to close TUI and keep service running; Esc cancels",
@@ -199,7 +201,7 @@ pub(super) fn tui_exit_confirmation_message(action: TuiExitAction) -> String {
     }
 }
 
-pub(super) fn cancel_tui_exit_confirmation(app: &mut TuiApp) -> bool {
+pub(crate) fn cancel_tui_exit_confirmation(app: &mut TuiApp) -> bool {
     if let Some(confirmation) = app.exit_confirmation.take() {
         app.last_message = format!("{} cancelled", confirmation.action.label());
         true
@@ -208,7 +210,7 @@ pub(super) fn cancel_tui_exit_confirmation(app: &mut TuiApp) -> bool {
     }
 }
 
-pub(super) fn expire_tui_exit_confirmation(app: &mut TuiApp) -> bool {
+pub(crate) fn expire_tui_exit_confirmation(app: &mut TuiApp) -> bool {
     let Some(confirmation) = app.exit_confirmation else {
         return false;
     };
@@ -221,7 +223,7 @@ pub(super) fn expire_tui_exit_confirmation(app: &mut TuiApp) -> bool {
     true
 }
 
-pub(super) fn tui_exit_confirmation_active_for(app: &TuiApp, action: TuiExitAction) -> bool {
+pub(crate) fn tui_exit_confirmation_active_for(app: &TuiApp, action: TuiExitAction) -> bool {
     app.exit_confirmation.is_some_and(|confirmation| {
         confirmation.action == action
             && confirmation.started.elapsed() <= TUI_EXIT_CONFIRMATION_TIMEOUT

@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn tui_policy_group_delay_table_title(app: &TuiApp, group: &str) -> String {
+pub(crate) fn tui_policy_group_delay_table_title(app: &TuiApp, group: &str) -> String {
     if let Some(run) = &app.policy_group_delay_run
         && run.group == group
     {
@@ -16,7 +16,7 @@ pub(super) fn tui_policy_group_delay_table_title(app: &TuiApp, group: &str) -> S
     }
 }
 
-pub(super) fn tui_policy_group_delay_results(response: &Value) -> Vec<TuiPolicyGroupDelayResult> {
+pub(crate) fn tui_policy_group_delay_results(response: &Value) -> Vec<TuiPolicyGroupDelayResult> {
     value_array(response, &["results"])
         .map(|items| {
             items
@@ -38,7 +38,7 @@ pub(super) fn tui_policy_group_delay_results(response: &Value) -> Vec<TuiPolicyG
         .unwrap_or_default()
 }
 
-pub(super) fn first_tui_policy_group_delay_result(
+pub(crate) fn first_tui_policy_group_delay_result(
     response: &Value,
     outbound: &str,
 ) -> TuiPolicyGroupDelayResult {
@@ -48,7 +48,7 @@ pub(super) fn first_tui_policy_group_delay_result(
         .unwrap_or_else(|| failed_tui_policy_group_delay_result(outbound, "delay result missing"))
 }
 
-pub(super) fn failed_tui_policy_group_delay_result(
+pub(crate) fn failed_tui_policy_group_delay_result(
     outbound: &str,
     error: impl Into<String>,
 ) -> TuiPolicyGroupDelayResult {
@@ -61,7 +61,7 @@ pub(super) fn failed_tui_policy_group_delay_result(
     }
 }
 
-pub(super) fn tui_policy_group_delay_for<'a>(
+pub(crate) fn tui_policy_group_delay_for<'a>(
     app: &'a TuiApp,
     group: &str,
     outbound: &str,
@@ -74,7 +74,7 @@ pub(super) fn tui_policy_group_delay_for<'a>(
         .find(|result| result.outbound == outbound)
 }
 
-pub(super) fn format_tui_policy_group_delay(result: Option<&TuiPolicyGroupDelayResult>) -> String {
+pub(crate) fn format_tui_policy_group_delay(result: Option<&TuiPolicyGroupDelayResult>) -> String {
     match result {
         Some(result) => {
             if let Some(latency_ms) = result.latency_ms {
@@ -95,7 +95,9 @@ pub(super) fn format_tui_policy_group_delay(result: Option<&TuiPolicyGroupDelayR
     }
 }
 
-pub(super) fn tui_policy_group_delay_cell(result: Option<&TuiPolicyGroupDelayResult>) -> Cell<'static> {
+pub(crate) fn tui_policy_group_delay_cell(
+    result: Option<&TuiPolicyGroupDelayResult>,
+) -> Cell<'static> {
     let cell = Cell::from(format_tui_policy_group_delay(result));
     match tui_policy_group_delay_color(result) {
         Some(color) => cell.style(Style::default().fg(color)),
@@ -103,7 +105,9 @@ pub(super) fn tui_policy_group_delay_cell(result: Option<&TuiPolicyGroupDelayRes
     }
 }
 
-pub(super) fn tui_policy_group_delay_color(result: Option<&TuiPolicyGroupDelayResult>) -> Option<Color> {
+pub(crate) fn tui_policy_group_delay_color(
+    result: Option<&TuiPolicyGroupDelayResult>,
+) -> Option<Color> {
     let result = result?;
     match result.latency_ms {
         Some(latency_ms) if latency_ms <= 300 => Some(Color::Green),
@@ -114,7 +118,7 @@ pub(super) fn tui_policy_group_delay_color(result: Option<&TuiPolicyGroupDelayRe
     }
 }
 
-pub(super) fn upsert_tui_policy_group_delay_result(
+pub(crate) fn upsert_tui_policy_group_delay_result(
     results: &mut Vec<TuiPolicyGroupDelayResult>,
     result: TuiPolicyGroupDelayResult,
 ) {
@@ -128,7 +132,7 @@ pub(super) fn upsert_tui_policy_group_delay_result(
     }
 }
 
-pub(super) fn drain_tui_policy_group_delay_updates(app: &mut TuiApp) -> bool {
+pub(crate) fn drain_tui_policy_group_delay_updates(app: &mut TuiApp) -> bool {
     let Some(receiver) = app.policy_group_delay_updates.as_mut() else {
         return false;
     };
@@ -180,7 +184,7 @@ pub(super) fn drain_tui_policy_group_delay_updates(app: &mut TuiApp) -> bool {
     changed
 }
 
-pub(super) fn cancel_tui_policy_group_delay(app: &mut TuiApp) -> bool {
+pub(crate) fn cancel_tui_policy_group_delay(app: &mut TuiApp) -> bool {
     let mut cancelled = false;
     if let Some(run) = app.policy_group_delay_run.take() {
         for task in run.tasks {
@@ -194,7 +198,10 @@ pub(super) fn cancel_tui_policy_group_delay(app: &mut TuiApp) -> bool {
     cancelled
 }
 
-pub(super) fn apply_tui_policy_group_delay_update(app: &mut TuiApp, update: TuiPolicyGroupDelayUpdate) -> bool {
+pub(crate) fn apply_tui_policy_group_delay_update(
+    app: &mut TuiApp,
+    update: TuiPolicyGroupDelayUpdate,
+) -> bool {
     let Some(run) = app.policy_group_delay_run.as_mut() else {
         return false;
     };
@@ -210,10 +217,10 @@ pub(super) fn apply_tui_policy_group_delay_update(app: &mut TuiApp, update: TuiP
     );
     true
 }
-pub(super) async fn tui_start_policy_group_delay(app: &mut TuiApp, group: &str) -> Result<usize> {
+pub(crate) async fn tui_start_policy_group_delay(app: &mut TuiApp, group: &str) -> Result<usize> {
     cancel_tui_policy_group_delay(app);
     app.refresh_status().await?;
-    let group = tui_policy_groups(app.control_snapshot.as_ref())
+    let group = policy_groups(app.control_snapshot.as_ref())
         .into_iter()
         .find(|item| item.tag == group)
         .with_context(|| format!("policy group `{group}` is no longer available"))?;
@@ -258,12 +265,12 @@ pub(super) async fn tui_start_policy_group_delay(app: &mut TuiApp, group: &str) 
     Ok(total)
 }
 
-pub(super) fn tui_policy_group_delay_request_timeout(outbound_count: usize) -> Duration {
+pub(crate) fn tui_policy_group_delay_request_timeout(outbound_count: usize) -> Duration {
     let count = u64::try_from(outbound_count.max(1)).unwrap_or(u64::MAX);
     Duration::from_secs(count.saturating_mul(15).saturating_add(10).min(1_800))
 }
 
-pub(super) fn spawn_tui_policy_group_delay_run(
+pub(crate) fn spawn_tui_policy_group_delay_run(
     run_id: u64,
     group: String,
     outbounds: Vec<String>,
@@ -303,7 +310,7 @@ pub(super) fn spawn_tui_policy_group_delay_run(
         .collect()
 }
 
-pub(super) async fn tui_measure_policy_group_delay_outbound(
+pub(crate) async fn tui_measure_policy_group_delay_outbound(
     listen: std::net::SocketAddr,
     timeout: Duration,
     token: String,

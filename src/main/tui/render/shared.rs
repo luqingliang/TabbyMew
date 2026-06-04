@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn render_kv_table(
+pub(crate) fn render_kv_table(
     frame: &mut Frame<'_>,
     area: Rect,
     title: &'static str,
@@ -28,7 +28,7 @@ pub(super) fn render_kv_table(
     frame.render_widget(table, area);
 }
 
-pub(super) fn split_dashboard_status_and_logs(area: Rect) -> std::rc::Rc<[Rect]> {
+pub(crate) fn split_dashboard_status_and_logs(area: Rect) -> std::rc::Rc<[Rect]> {
     let top_height = dashboard_status_height(area.height);
     Layout::default()
         .direction(Direction::Vertical)
@@ -36,7 +36,7 @@ pub(super) fn split_dashboard_status_and_logs(area: Rect) -> std::rc::Rc<[Rect]>
         .split(area)
 }
 
-pub(super) fn dashboard_status_height(height: u16) -> u16 {
+pub(crate) fn dashboard_status_height(height: u16) -> u16 {
     if height <= 12 {
         return height;
     }
@@ -44,7 +44,7 @@ pub(super) fn dashboard_status_height(height: u16) -> u16 {
     room_for_logs.clamp(12, 17)
 }
 
-pub(super) fn render_log_tail(frame: &mut Frame<'_>, area: Rect, log_tail: &str) {
+pub(crate) fn render_log_tail(frame: &mut Frame<'_>, area: Rect, log_tail: &str) {
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -67,7 +67,7 @@ pub(super) fn render_log_tail(frame: &mut Frame<'_>, area: Rect, log_tail: &str)
     frame.render_widget(logs, area);
 }
 
-pub(super) fn simplify_tui_log_tail(log_tail: &str) -> String {
+pub(crate) fn simplify_tui_log_tail(log_tail: &str) -> String {
     let mut output = String::with_capacity(log_tail.len());
     for line in log_tail.lines() {
         if !output.is_empty() {
@@ -81,7 +81,7 @@ pub(super) fn simplify_tui_log_tail(log_tail: &str) -> String {
     output
 }
 
-pub(super) fn simplify_tui_log_line(line: &str) -> Cow<'_, str> {
+pub(crate) fn simplify_tui_log_line(line: &str) -> Cow<'_, str> {
     let line = if starts_with_date_time_prefix(line) {
         Cow::Borrowed(&line[11..])
     } else {
@@ -91,7 +91,7 @@ pub(super) fn simplify_tui_log_line(line: &str) -> Cow<'_, str> {
     simplify_tui_connection_log_line(line)
 }
 
-pub(super) fn compact_tui_time_level_spacing(line: Cow<'_, str>) -> Cow<'_, str> {
+pub(crate) fn compact_tui_time_level_spacing(line: Cow<'_, str>) -> Cow<'_, str> {
     let text = line.as_ref();
     if !starts_with_time_prefix(text) {
         return line;
@@ -114,7 +114,7 @@ pub(super) fn compact_tui_time_level_spacing(line: Cow<'_, str>) -> Cow<'_, str>
     Cow::Owned(output)
 }
 
-pub(super) fn simplify_tui_connection_log_line(line: Cow<'_, str>) -> Cow<'_, str> {
+pub(crate) fn simplify_tui_connection_log_line(line: Cow<'_, str>) -> Cow<'_, str> {
     let text = line.as_ref();
     if !(text.contains("connection routed") || text.contains("connection failed")) {
         return line;
@@ -127,7 +127,7 @@ pub(super) fn simplify_tui_connection_log_line(line: Cow<'_, str>) -> Cow<'_, st
     )
 }
 
-pub(super) fn starts_with_time_prefix(line: &str) -> bool {
+pub(crate) fn starts_with_time_prefix(line: &str) -> bool {
     let bytes = line.as_bytes();
     bytes.len() >= 8
         && bytes[0..2].iter().all(u8::is_ascii_digit)
@@ -137,7 +137,7 @@ pub(super) fn starts_with_time_prefix(line: &str) -> bool {
         && bytes[6..8].iter().all(u8::is_ascii_digit)
 }
 
-pub(super) fn starts_with_date_time_prefix(line: &str) -> bool {
+pub(crate) fn starts_with_date_time_prefix(line: &str) -> bool {
     let bytes = line.as_bytes();
     bytes.len() >= 19
         && bytes[0..4].iter().all(u8::is_ascii_digit)
@@ -153,7 +153,7 @@ pub(super) fn starts_with_date_time_prefix(line: &str) -> bool {
         && bytes[17..19].iter().all(u8::is_ascii_digit)
 }
 
-pub(super) fn render_diagnostics(frame: &mut Frame<'_>, area: Rect, summary: &TuiStatusSummary) {
+pub(crate) fn render_diagnostics(frame: &mut Frame<'_>, area: Rect, summary: &TuiStatusSummary) {
     let mut items = Vec::new();
     if summary.cleanup_items.is_empty()
         && summary.control_error.is_none()
@@ -195,7 +195,7 @@ pub(super) fn render_diagnostics(frame: &mut Frame<'_>, area: Rect, summary: &Tu
     frame.render_widget(list, area);
 }
 
-pub(super) fn diagnostic_inline(summary: &TuiStatusSummary) -> String {
+pub(crate) fn diagnostic_inline(summary: &TuiStatusSummary) -> String {
     let mut items = summary.cleanup_items.clone();
     if summary.control_error.is_some() {
         items.push("control_api".to_string());
@@ -213,7 +213,7 @@ pub(super) fn diagnostic_inline(summary: &TuiStatusSummary) -> String {
     }
 }
 
-pub(super) fn centered_rect(width_percent: u16, height_percent: u16, area: Rect) -> Rect {
+pub(crate) fn centered_rect(width_percent: u16, height_percent: u16, area: Rect) -> Rect {
     let vertical_margin = (100u16.saturating_sub(height_percent)) / 2;
     let horizontal_margin = (100u16.saturating_sub(width_percent)) / 2;
     let vertical = Layout::default()
@@ -238,7 +238,7 @@ pub(super) fn centered_rect(width_percent: u16, height_percent: u16, area: Rect)
         })
 }
 
-pub(super) fn service_status_style(service: &ServiceStatus) -> Style {
+pub(crate) fn service_status_style(service: &ServiceStatus) -> Style {
     if service.needs_cleanup() {
         return Style::default()
             .fg(Color::Yellow)

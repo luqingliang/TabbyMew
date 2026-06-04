@@ -137,10 +137,10 @@ fn shell_command_registry_supports_lookup_and_search() {
     );
     assert_eq!(split_command_query("/mode rule"), ("mode", "rule"));
     assert_eq!(
-        parse_tui_route_mode("global").unwrap(),
+        parse_route_mode_arg("global").unwrap(),
         router::RouteMode::Global
     );
-    assert!(parse_tui_route_mode("global extra").is_err());
+    assert!(parse_route_mode_arg("global extra").is_err());
     assert_eq!(
         split_command_query("/global Hong Kong Node"),
         ("global", "Hong Kong Node")

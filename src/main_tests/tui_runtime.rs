@@ -83,7 +83,7 @@ fn tui_tun_summary_keeps_permission_status_as_suffix() {
     });
 
     assert_eq!(
-        format_tui_tun_state(Some(&control_snapshot)),
+        format_control_snapshot_tun_state(Some(&control_snapshot)),
         "on (requires_permission)"
     );
 
@@ -95,7 +95,7 @@ fn tui_tun_summary_keeps_permission_status_as_suffix() {
     });
 
     assert_eq!(
-        format_tui_tun_state(Some(&control_snapshot)),
+        format_control_snapshot_tun_state(Some(&control_snapshot)),
         "off (requires_permission)"
     );
 }

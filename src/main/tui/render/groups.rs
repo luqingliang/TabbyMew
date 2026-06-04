@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn draw_tui_policy_group_list_selector(frame: &mut Frame<'_>, app: &TuiApp) {
+pub(crate) fn draw_tui_policy_group_list_selector(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = centered_rect(78, 72, frame.area());
     frame.render_widget(Clear, area);
     let block = Block::default()
@@ -27,7 +27,7 @@ pub(super) fn draw_tui_policy_group_list_selector(frame: &mut Frame<'_>, app: &T
 
     let groups = app.filtered_policy_groups();
     if groups.is_empty() {
-        let text = if tui_policy_groups(app.control_snapshot.as_ref()).is_empty() {
+        let text = if policy_groups(app.control_snapshot.as_ref()).is_empty() {
             "No policy groups are available."
         } else {
             "No policy groups match this search."
@@ -82,7 +82,7 @@ pub(super) fn draw_tui_policy_group_list_selector(frame: &mut Frame<'_>, app: &T
     frame.render_widget(help, chunks[2]);
 }
 
-pub(super) fn draw_tui_policy_group_selector(frame: &mut Frame<'_>, app: &TuiApp) {
+pub(crate) fn draw_tui_policy_group_selector(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = centered_rect(76, 72, frame.area());
     frame.render_widget(Clear, area);
     let group = app
@@ -111,7 +111,7 @@ pub(super) fn draw_tui_policy_group_selector(frame: &mut Frame<'_>, app: &TuiApp
     .block(Block::default().title(" Search ").borders(Borders::ALL));
     frame.render_widget(input, chunks[0]);
 
-    let current = current_tui_policy_group_outbound(app.control_snapshot.as_ref(), group);
+    let current = current_policy_group_outbound(app.control_snapshot.as_ref(), group);
     let outbounds = app.filtered_policy_group_outbounds();
     if outbounds.is_empty() {
         let empty = Paragraph::new("No outbounds match this search.")

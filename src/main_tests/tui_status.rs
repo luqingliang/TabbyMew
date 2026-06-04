@@ -175,9 +175,7 @@ fn tui_status_summary_includes_core_sections() {
             .unwrap()
             .contains("global target: Proxy")
     );
-    assert!(
-        format_cli_policy_groups(&tui_policy_groups(Some(&control_snapshot))).contains("Proxy")
-    );
+    assert!(format_cli_policy_groups(&policy_groups(Some(&control_snapshot))).contains("Proxy"));
     assert!(format_cli_tun_status(control_snapshot.get("proxy").unwrap()).contains("status: on"));
     assert!(
         format_cli_tun_status(control_snapshot.get("proxy").unwrap()).contains("auto route: on")

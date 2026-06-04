@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn draw_tui(frame: &mut Frame<'_>, app: &mut TuiApp) {
+pub(crate) fn draw_tui(frame: &mut Frame<'_>, app: &mut TuiApp) {
     match app.mode {
         TuiMode::Output => draw_tui_output(frame, app),
         TuiMode::Dashboard

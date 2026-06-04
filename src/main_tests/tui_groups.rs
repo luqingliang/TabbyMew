@@ -21,19 +21,19 @@ fn parses_tui_policy_group_selection() -> Result<()> {
         }
     });
 
-    let group_only = parse_tui_policy_group_selection(Some(&control_snapshot), "Proxy")?;
+    let group_only = parse_policy_group_selection(Some(&control_snapshot), "Proxy")?;
     assert_eq!(group_only.group.tag, "Proxy");
     assert!(group_only.outbound.is_none());
 
-    let selection = parse_tui_policy_group_selection(Some(&control_snapshot), "Proxy Japan")?;
+    let selection = parse_policy_group_selection(Some(&control_snapshot), "Proxy Japan")?;
     assert_eq!(selection.group.tag, "Proxy");
     assert_eq!(selection.outbound.as_deref(), Some("Japan 01"));
     assert_eq!(
-        filtered_tui_policy_group_outbounds(Some(&control_snapshot), Some("Proxy"), "hong"),
+        filtered_policy_group_outbounds(Some(&control_snapshot), Some("Proxy"), "hong"),
         vec!["Hong Kong 01".to_string()]
     );
     assert_eq!(
-        current_tui_policy_group_outbound(Some(&control_snapshot), "Fallback").as_deref(),
+        current_policy_group_outbound(Some(&control_snapshot), "Fallback").as_deref(),
         Some("direct")
     );
     Ok(())
@@ -60,7 +60,7 @@ fn opens_tui_policy_group_list_before_outbound_selector() -> Result<()> {
         }
     });
 
-    let groups = filtered_tui_policy_groups(Some(&control_snapshot), "hong");
+    let groups = filtered_policy_groups(Some(&control_snapshot), "hong");
     assert_eq!(groups.len(), 1);
     assert_eq!(groups[0].tag, "Proxy");
 

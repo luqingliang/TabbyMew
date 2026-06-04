@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn draw_tui_route_mode_selector(frame: &mut Frame<'_>, app: &TuiApp) {
+pub(crate) fn draw_tui_route_mode_selector(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = centered_rect(62, 46, frame.area());
     frame.render_widget(Clear, area);
     let block = Block::default()
@@ -14,7 +14,7 @@ pub(super) fn draw_tui_route_mode_selector(frame: &mut Frame<'_>, app: &TuiApp) 
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(5), Constraint::Length(4)])
         .split(inner);
-    let current = current_tui_route_mode(app.control_snapshot.as_ref());
+    let current = current_route_mode(app.control_snapshot.as_ref());
     let rows = route_mode_options()
         .iter()
         .map(|option| {
@@ -59,7 +59,7 @@ pub(super) fn draw_tui_route_mode_selector(frame: &mut Frame<'_>, app: &TuiApp) 
     frame.render_widget(help, chunks[1]);
 }
 
-pub(super) fn draw_tui_global_target_selector(frame: &mut Frame<'_>, app: &TuiApp) {
+pub(crate) fn draw_tui_global_target_selector(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = centered_rect(72, 68, frame.area());
     frame.render_widget(Clear, area);
     let block = Block::default()
@@ -84,7 +84,7 @@ pub(super) fn draw_tui_global_target_selector(frame: &mut Frame<'_>, app: &TuiAp
     .block(Block::default().title(" Search ").borders(Borders::ALL));
     frame.render_widget(input, chunks[0]);
 
-    let current = current_tui_global_target(app.control_snapshot.as_ref());
+    let current = current_global_target(app.control_snapshot.as_ref());
     let targets = app.filtered_global_targets();
     if targets.is_empty() {
         let empty = Paragraph::new("No global targets match this search.")

@@ -1,6 +1,9 @@
 use super::*;
 
-pub(super) async fn handle_tui_route_mode_selector_key(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
+pub(crate) async fn handle_tui_route_mode_selector_key(
+    app: &mut TuiApp,
+    key: KeyEvent,
+) -> Result<()> {
     match key.code {
         KeyCode::Esc => {
             app.mode = TuiMode::Dashboard;
@@ -36,7 +39,10 @@ pub(super) async fn handle_tui_route_mode_selector_key(app: &mut TuiApp, key: Ke
     Ok(())
 }
 
-pub(super) async fn handle_tui_global_target_selector_key(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
+pub(crate) async fn handle_tui_global_target_selector_key(
+    app: &mut TuiApp,
+    key: KeyEvent,
+) -> Result<()> {
     match key.code {
         KeyCode::Esc => {
             app.mode = TuiMode::Dashboard;

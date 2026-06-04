@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn draw_tui_route_rules(frame: &mut Frame<'_>, app: &TuiApp) {
+pub(crate) fn draw_tui_route_rules(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = centered_rect(90, 82, frame.area());
     frame.render_widget(Clear, area);
     let block = Block::default()
@@ -26,7 +26,7 @@ pub(super) fn draw_tui_route_rules(frame: &mut Frame<'_>, app: &TuiApp) {
     .block(Block::default().title(" Search ").borders(Borders::ALL));
     frame.render_widget(input, chunks[0]);
 
-    let items = tui_route_rule_items(app.control_snapshot.as_ref());
+    let items = route_rule_items(app.control_snapshot.as_ref());
     let visible = app.filtered_route_rules();
     let custom = items.iter().filter(|item| item.source == "custom").count();
     let subscription = items
@@ -114,7 +114,7 @@ pub(super) fn draw_tui_route_rules(frame: &mut Frame<'_>, app: &TuiApp) {
     frame.render_widget(help, chunks[3]);
 }
 
-pub(super) fn draw_tui_route_rule_actions(frame: &mut Frame<'_>, app: &TuiApp) {
+pub(crate) fn draw_tui_route_rule_actions(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = centered_rect(48, 30, frame.area());
     frame.render_widget(Clear, area);
     let block = Block::default()
@@ -155,7 +155,7 @@ pub(super) fn draw_tui_route_rule_actions(frame: &mut Frame<'_>, app: &TuiApp) {
     frame.render_widget(help, chunks[1]);
 }
 
-pub(super) fn draw_tui_route_rule_add(frame: &mut Frame<'_>, app: &TuiApp) {
+pub(crate) fn draw_tui_route_rule_add(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = centered_rect(78, 38, frame.area());
     frame.render_widget(Clear, area);
     let title = if app.route_rule_form_id.is_some() {
@@ -240,7 +240,7 @@ pub(super) fn draw_tui_route_rule_add(frame: &mut Frame<'_>, app: &TuiApp) {
     frame.render_widget(help, chunks[3]);
 }
 
-pub(super) fn draw_tui_route_rule_target_selector(frame: &mut Frame<'_>, app: &TuiApp) {
+pub(crate) fn draw_tui_route_rule_target_selector(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = centered_rect(72, 68, frame.area());
     frame.render_widget(Clear, area);
     let block = Block::default()
@@ -307,7 +307,7 @@ pub(super) fn draw_tui_route_rule_target_selector(frame: &mut Frame<'_>, app: &T
     frame.render_widget(help, chunks[2]);
 }
 
-pub(super) fn tui_route_rule_add_field_style(app: &TuiApp, field: usize) -> Style {
+pub(crate) fn tui_route_rule_add_field_style(app: &TuiApp, field: usize) -> Style {
     if app.route_rule_add_field == field {
         Style::default()
             .fg(Color::Cyan)

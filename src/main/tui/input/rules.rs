@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) async fn handle_tui_route_rules_key(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
+pub(crate) async fn handle_tui_route_rules_key(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
     match key.code {
         KeyCode::Esc => {
             app.mode = TuiMode::Dashboard;
@@ -65,7 +65,10 @@ pub(super) async fn handle_tui_route_rules_key(app: &mut TuiApp, key: KeyEvent) 
     Ok(())
 }
 
-pub(super) async fn handle_tui_route_rule_actions_key(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
+pub(crate) async fn handle_tui_route_rule_actions_key(
+    app: &mut TuiApp,
+    key: KeyEvent,
+) -> Result<()> {
     match key.code {
         KeyCode::Esc => {
             app.mode = TuiMode::RouteRules;
@@ -104,7 +107,7 @@ pub(super) async fn handle_tui_route_rule_actions_key(app: &mut TuiApp, key: Key
     Ok(())
 }
 
-pub(super) async fn handle_tui_route_rule_add_key(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
+pub(crate) async fn handle_tui_route_rule_add_key(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
     match key.code {
         KeyCode::Esc => {
             reset_tui_route_rule_add_form(app);
@@ -161,7 +164,10 @@ pub(super) async fn handle_tui_route_rule_add_key(app: &mut TuiApp, key: KeyEven
     Ok(())
 }
 
-pub(super) async fn handle_tui_route_rule_target_selector_key(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
+pub(crate) async fn handle_tui_route_rule_target_selector_key(
+    app: &mut TuiApp,
+    key: KeyEvent,
+) -> Result<()> {
     match key.code {
         KeyCode::Esc => {
             app.mode = TuiMode::RouteRuleAdd;

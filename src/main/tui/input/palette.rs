@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) async fn handle_tui_palette_key(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
+pub(crate) async fn handle_tui_palette_key(app: &mut TuiApp, key: KeyEvent) -> Result<()> {
     match key.code {
         KeyCode::Esc => app.mode = TuiMode::Dashboard,
         KeyCode::Backspace => {

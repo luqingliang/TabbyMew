@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) async fn execute_tui_command(
+pub(crate) async fn execute_tui_command(
     app: &mut TuiApp,
     command: &ShellCommandSpec,
     args: &str,
@@ -30,7 +30,7 @@ pub(super) async fn execute_tui_command(
                 app.refresh_status().await?;
                 open_tui_route_mode_selector(app);
             } else {
-                let mode = parse_tui_route_mode(args)?;
+                let mode = parse_route_mode_arg(args)?;
                 let text = tui_set_route_mode(app, mode).await?;
                 app.output_title = "Route Mode".to_string();
                 app.output = text;
@@ -44,7 +44,7 @@ pub(super) async fn execute_tui_command(
             if args.is_empty() {
                 open_tui_global_target_selector(app)?;
             } else {
-                let target = resolve_tui_global_target(app.control_snapshot.as_ref(), args)?;
+                let target = resolve_global_target(app.control_snapshot.as_ref(), args)?;
                 let text = tui_set_global_target(app, &target).await?;
                 app.output_title = "Global Target".to_string();
                 app.output = text;
@@ -58,8 +58,7 @@ pub(super) async fn execute_tui_command(
             if args.is_empty() {
                 open_tui_policy_group_list_selector(app)?;
             } else {
-                let selection =
-                    parse_tui_policy_group_selection(app.control_snapshot.as_ref(), args)?;
+                let selection = parse_policy_group_selection(app.control_snapshot.as_ref(), args)?;
                 match selection.outbound {
                     Some(outbound) => {
                         let text =
@@ -218,7 +217,11 @@ pub(super) async fn execute_tui_command(
     Ok(())
 }
 
-pub(super) fn should_record_executed_message(command: &ShellCommandSpec, args: &str, mode: TuiMode) -> bool {
+pub(crate) fn should_record_executed_message(
+    command: &ShellCommandSpec,
+    args: &str,
+    mode: TuiMode,
+) -> bool {
     !(matches!(command.name, "detach" | "quit")
         || matches!(command.name, "mode" | "global") && args.trim().is_empty()
         || matches!(command.name, "groups" | "rules" | "subscriptions") && mode != TuiMode::Output)
