@@ -325,7 +325,6 @@ async fn reload_active_config(state: &ControlState) -> Result<()> {
         .config_path
         .clone()
         .context("active config path is not available")?;
-    migrate_active_subscription_config_defaults_for_state(state, &config_path)?;
     let config = Config::load(&config_path)
         .with_context(|| format!("failed to load active config {}", config_path.display()))?;
     let new_active = build_active_config_from_config_with_store(
@@ -390,16 +389,6 @@ async fn replace_active_config_preserving_proxy(
 
     state.replace_active_config(new_active);
     Ok(())
-}
-
-fn migrate_active_subscription_config_defaults_for_state(
-    state: &ControlState,
-    config_path: &Path,
-) -> Result<bool> {
-    let Some(state_dir) = state.control_api.state_dir.as_deref() else {
-        return Ok(false);
-    };
-    subscription_remote::migrate_active_subscription_config_defaults(state_dir, config_path)
 }
 
 async fn restore_proxy_runtime(

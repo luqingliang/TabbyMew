@@ -218,25 +218,6 @@ impl Config {
         }
     }
 
-    pub fn ensure_default_tun_inbound(&mut self) -> bool {
-        if self
-            .inbounds
-            .iter()
-            .any(|inbound| matches!(inbound, InboundConfig::Tun { .. }))
-        {
-            return false;
-        }
-
-        let existing_tags = self
-            .inbounds
-            .iter()
-            .map(InboundConfig::tag)
-            .collect::<HashSet<_>>();
-        let tag = unique_default_tun_tag(&existing_tags);
-        self.inbounds.push(Self::default_tun_inbound_with_tag(tag));
-        true
-    }
-
     fn default_local() -> Config {
         let mut config = Self::example();
         if let Some(InboundConfig::Hybrid { listen_port, .. }) = config.inbounds.first_mut() {
@@ -244,21 +225,5 @@ impl Config {
         }
         config.inbounds.push(Self::default_tun_inbound());
         config
-    }
-}
-
-fn unique_default_tun_tag(existing_tags: &HashSet<&str>) -> String {
-    for tag in ["tun-in", "tun-auto-in"] {
-        if !existing_tags.contains(tag) {
-            return tag.to_string();
-        }
-    }
-    let mut index = 2usize;
-    loop {
-        let tag = format!("tun-in-{index}");
-        if !existing_tags.contains(tag.as_str()) {
-            return tag;
-        }
-        index += 1;
     }
 }

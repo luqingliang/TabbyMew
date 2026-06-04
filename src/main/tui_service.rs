@@ -10,7 +10,6 @@ async fn tui_start_service(session: &ShellSession) -> Result<String> {
     }
 
     let config_path = resolve_launch_config_path(session.config.as_ref(), &session.state_dir)?;
-    warn_if_active_subscription_config_migration_fails(&session.state_dir, &config_path);
     let config = Config::load(&config_path)?;
     validate_runtime_config(&config, config_base_dir(&config_path))?;
     let state = process_manager::start(StartOptions {

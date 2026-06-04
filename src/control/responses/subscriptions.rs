@@ -169,7 +169,6 @@ async fn subscription_activate_response(
     let runtime = subscription_runtime(state)?;
     let subscription = runtime.summary(&request.name).await?;
     let config_path = PathBuf::from(&subscription.output);
-    subscription_remote::ensure_subscription_config_runtime_defaults(&config_path)?;
     let config = Config::load(&config_path).with_context(|| {
         format!(
             "failed to load subscription config {}",

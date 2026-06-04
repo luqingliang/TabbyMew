@@ -1,16 +1,5 @@
 use super::*;
 
-pub(super) fn warn_if_active_subscription_config_migration_fails(state_dir: &Path, config_path: &Path) {
-    if let Err(err) =
-        subscription_remote::migrate_active_subscription_config_defaults(state_dir, config_path)
-    {
-        eprintln!(
-            "warning: failed to migrate active subscription config {}: {err:#}",
-            config_path.display()
-        );
-    }
-}
-
 pub(super) async fn add_subscription(command: SubscriptionAddCommand) -> Result<()> {
     subscription_remote::validate_name(&command.name)?;
     subscription_remote::validate_url(&command.url)?;

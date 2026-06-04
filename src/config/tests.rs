@@ -684,24 +684,6 @@ fn default_local_config_uses_non_clash_proxy_port() {
 }
 
 #[test]
-fn ensure_default_tun_inbound_adds_missing_tun() {
-    let mut config = base_config();
-
-    assert!(config.ensure_default_tun_inbound());
-    assert_eq!(config.inbounds.len(), 2);
-    assert!(matches!(
-        &config.inbounds[1],
-        InboundConfig::Tun {
-            tag,
-            auto_route: true,
-            dns: TunDnsMode::Virtual,
-            ..
-        } if tag == "tun-in"
-    ));
-    config.validate().unwrap();
-}
-
-#[test]
 fn rejects_invalid_tun_bypass_cidr() {
     let mut config = base_config();
     config.inbounds.push(InboundConfig::Tun {
@@ -820,27 +802,6 @@ fn temp_config_path(prefix: &str, file_name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir.join(file_name)
-}
-
-#[test]
-fn ensure_default_tun_inbound_keeps_existing_tun_and_avoids_tag_collision() {
-    let mut config = base_config();
-    config.inbounds[0] = InboundConfig::Hybrid {
-        tag: "tun-in".to_string(),
-        listen: "127.0.0.1".to_string(),
-        listen_port: 7890,
-        username: None,
-        password: None,
-    };
-
-    assert!(config.ensure_default_tun_inbound());
-    assert!(matches!(
-        &config.inbounds[1],
-        InboundConfig::Tun { tag, .. } if tag == "tun-auto-in"
-    ));
-    assert!(!config.ensure_default_tun_inbound());
-    assert_eq!(config.inbounds.len(), 2);
-    config.validate().unwrap();
 }
 
 #[test]

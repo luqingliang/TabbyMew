@@ -287,183 +287,6 @@ mod tests {
     }
 
     #[test]
-    fn active_subscription_config_migration_adds_default_tun() -> Result<()> {
-        let dir = std::env::temp_dir().join(format!(
-            "tabbymew-subscription-tun-migration-test-{}-{}",
-            std::process::id(),
-            unix_now()
-        ));
-        fs::create_dir_all(&dir)?;
-        let output = subscription_output_path(&dir, "main")?;
-        if let Some(parent) = output.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(
-            &output,
-            r#"{
-  "log": {"level": "info"},
-  "inbounds": [
-    {"type": "hybrid", "tag": "hybrid-in", "listen": "127.0.0.1", "listen_port": 7890}
-  ],
-  "outbounds": [
-    {"type": "direct", "tag": "direct"},
-    {"type": "block", "tag": "block"}
-  ],
-  "route": {"final": "direct", "rules": []}
-}
-"#,
-        )?;
-        let mut store = SubscriptionStore::default();
-        store.subscriptions.insert(
-            "main".to_string(),
-            SubscriptionRecord {
-                name: "main".to_string(),
-                source: SubscriptionSource::Remote,
-                url: "https://example.com/sub?token=example-token".to_string(),
-                output: output.clone(),
-                inbound_tag: "hybrid-in".to_string(),
-                listen: "127.0.0.1".to_string(),
-                listen_port: 7890,
-                user_agent: DEFAULT_USER_AGENT.to_string(),
-                auto_update: true,
-                update_interval_seconds: DEFAULT_UPDATE_INTERVAL_SECONDS,
-                timeout_ms: DEFAULT_TIMEOUT_MS,
-                retries: DEFAULT_RETRIES,
-                last_checked_unix: None,
-                last_updated_unix: None,
-                last_success_unix: Some(1),
-                next_update_unix: Some(2),
-                last_error: None,
-                imported: Some(1),
-                warnings: Vec::new(),
-                last_etag: None,
-                last_modified: None,
-                last_final_url: None,
-            },
-        );
-        save_store(store_path(&dir), &store)?;
-
-        assert!(migrate_active_subscription_config_defaults(&dir, &output)?);
-        let migrated = Config::load(&output)?;
-        assert!(migrated.inbounds.iter().any(|inbound| matches!(
-            inbound,
-            crate::config::InboundConfig::Tun { tag, .. } if tag == "tun-in"
-        )));
-        assert!(!migrate_active_subscription_config_defaults(&dir, &output)?);
-
-        let unrelated = dir.join("unrelated.json");
-        fs::write(&unrelated, "{}\n")?;
-        assert!(!migrate_active_subscription_config_defaults(
-            &dir, &unrelated
-        )?);
-        fs::remove_dir_all(dir)?;
-        Ok(())
-    }
-
-    #[test]
-    fn active_subscription_config_migration_rewrites_legacy_generated_fields() -> Result<()> {
-        let dir = std::env::temp_dir().join(format!(
-            "tabbymew-subscription-generated-config-migration-test-{}-{}",
-            std::process::id(),
-            unix_now()
-        ));
-        fs::create_dir_all(&dir)?;
-        let output = subscription_output_path(&dir, "main")?;
-        if let Some(parent) = output.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(
-            &output,
-            r#"{
-  "log": {"level": "info"},
-  "dns": {
-    "nameservers": ["1.1.1.1", "tls://223.5.5.5:853"],
-    "listen": "0.0.0.0:1053",
-    "ipv6": false,
-    "use_hosts": false,
-    "fake_ip_range": "198.18.0.1/15",
-    "fake_ip_filter": ["*.lan"],
-    "timeout_ms": 1000
-  },
-  "inbounds": [
-    {"type": "mixed", "tag": "hybrid-in", "listen": "127.0.0.1", "listen_port": 7890},
-    {"type": "tun", "tag": "tun-in", "tcp_timeout": 600, "udp_timeout": 10}
-  ],
-  "outbounds": [
-    {"type": "direct", "tag": "direct"},
-    {"type": "block", "tag": "block"}
-  ],
-  "proxy_groups": [
-    {"type": "select", "tag": "Proxy", "outbounds": ["direct", "block"], "default": "direct"}
-  ],
-  "route": {"final": "Proxy", "rules": []}
-}
-"#,
-        )?;
-        let mut store = SubscriptionStore::default();
-        store.subscriptions.insert(
-            "main".to_string(),
-            SubscriptionRecord {
-                name: "main".to_string(),
-                source: SubscriptionSource::Remote,
-                url: "https://example.com/sub?token=example-token".to_string(),
-                output: output.clone(),
-                inbound_tag: "hybrid-in".to_string(),
-                listen: "127.0.0.1".to_string(),
-                listen_port: 7890,
-                user_agent: DEFAULT_USER_AGENT.to_string(),
-                auto_update: true,
-                update_interval_seconds: DEFAULT_UPDATE_INTERVAL_SECONDS,
-                timeout_ms: DEFAULT_TIMEOUT_MS,
-                retries: DEFAULT_RETRIES,
-                last_checked_unix: None,
-                last_updated_unix: None,
-                last_success_unix: Some(1),
-                next_update_unix: Some(2),
-                last_error: None,
-                imported: Some(1),
-                warnings: Vec::new(),
-                last_etag: None,
-                last_modified: None,
-                last_final_url: None,
-            },
-        );
-        save_store(store_path(&dir), &store)?;
-
-        assert!(migrate_active_subscription_config_defaults(&dir, &output)?);
-        let migrated = Config::load(&output)?;
-        let dns = migrated.dns.as_ref().expect("dns should be preserved");
-        assert_eq!(dns.servers, vec!["1.1.1.1".to_string()]);
-        assert_eq!(dns.timeout_ms, 1000);
-        assert_eq!(migrated.policy_groups.len(), 1);
-        assert_eq!(migrated.policy_groups[0].tag, "Proxy");
-        assert!(migrated.inbounds.iter().any(|inbound| matches!(
-            inbound,
-            crate::config::InboundConfig::Hybrid { tag, .. } if tag == "hybrid-in"
-        )));
-        assert!(migrated.inbounds.iter().any(|inbound| matches!(
-            inbound,
-            crate::config::InboundConfig::Tun {
-                tag,
-                tcp_timeout_seconds: Some(600),
-                udp_timeout_seconds: Some(10),
-                ..
-            } if tag == "tun-in"
-        )));
-        let migrated_text = fs::read_to_string(&output)?;
-        assert!(!migrated_text.contains("nameservers"));
-        assert!(!migrated_text.contains("fake_ip_filter"));
-        assert!(!migrated_text.contains("proxy_groups"));
-        assert!(!migrated_text.contains("\"mixed\""));
-        assert!(!migrated_text.contains("tcp_timeout\""));
-        assert!(!migrated_text.contains("udp_timeout\""));
-        assert!(!migrate_active_subscription_config_defaults(&dir, &output)?);
-
-        fs::remove_dir_all(dir)?;
-        Ok(())
-    }
-
-    #[test]
     fn subscription_output_paths_are_name_scoped() -> Result<()> {
         let dir = PathBuf::from("/tmp/tabbymew-state");
         assert_eq!(
@@ -579,6 +402,74 @@ rules:
                 .await
                 .is_err()
         );
+
+        fs::remove_dir_all(dir)?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn import_uploaded_clash_file_writes_native_dns_schema() -> Result<()> {
+        let dir = std::env::temp_dir().join(format!(
+            "tabbymew-subscription-native-dns-output-test-{}-{}",
+            std::process::id(),
+            unix_now()
+        ));
+        let runtime = SubscriptionRuntime::new(&dir);
+        let yaml = r#"
+dns:
+  enable: true
+  nameserver:
+    - 1.1.1.1
+    - tls://223.5.5.5:853
+proxies:
+  - name: file-trojan
+    type: trojan
+    server: trojan.example.com
+    port: 443
+    password: example-password
+    sni: trojan.example.com
+rules:
+  - MATCH,file-trojan
+"#;
+        let report = runtime
+            .import_uploaded(
+                SubscriptionRecord {
+                    name: "file-main".to_string(),
+                    source: SubscriptionSource::UploadedFile,
+                    url: uploaded_file_url(Some("Flower.yaml")),
+                    output: PathBuf::from("/tmp/ignored.json"),
+                    inbound_tag: "hybrid-in".to_string(),
+                    listen: "127.0.0.1".to_string(),
+                    listen_port: 7890,
+                    user_agent: DEFAULT_USER_AGENT.to_string(),
+                    auto_update: false,
+                    update_interval_seconds: MIN_UPDATE_INTERVAL_SECONDS,
+                    timeout_ms: DEFAULT_TIMEOUT_MS,
+                    retries: DEFAULT_RETRIES,
+                    last_checked_unix: None,
+                    last_updated_unix: None,
+                    last_success_unix: None,
+                    next_update_unix: None,
+                    last_error: None,
+                    imported: None,
+                    warnings: Vec::new(),
+                    last_etag: None,
+                    last_modified: None,
+                    last_final_url: None,
+                },
+                yaml,
+            )
+            .await?;
+
+        let output = PathBuf::from(&report.output);
+        let text = fs::read_to_string(&output)?;
+        assert!(!text.contains("\"nameserver\""));
+        assert!(!text.contains("\"nameservers\""));
+        assert!(text.contains("\"servers\""));
+        let config = Config::load(&output)?;
+        let dns = config.dns.as_ref().expect("dns should be imported");
+        assert_eq!(dns.servers, vec!["1.1.1.1".to_string()]);
+        validate_generated_config(&config)?;
 
         fs::remove_dir_all(dir)?;
         Ok(())

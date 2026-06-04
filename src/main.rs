@@ -202,7 +202,6 @@ async fn main() -> Result<()> {
                 }
             }
             let config_path = resolve_launch_config_path(config.as_ref(), &state_dir)?;
-            warn_if_active_subscription_config_migration_fails(&state_dir, &config_path);
             let config = Config::load(&config_path)?;
             validate_runtime_config(&config, config_base_dir(&config_path))?;
             let state = process_manager::start(StartOptions {
@@ -471,7 +470,6 @@ async fn main() -> Result<()> {
                 env::var_os("TABBYMEW_LOG_FILE").map(PathBuf::from),
             )?;
             let config_path = resolve_launch_config_path(config.as_ref(), &run_paths.state_dir)?;
-            warn_if_active_subscription_config_migration_fails(&run_paths.state_dir, &config_path);
             let config = Config::load(&config_path)?;
             let level = config
                 .log
