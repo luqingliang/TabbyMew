@@ -7,11 +7,30 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+#[cfg(not(test))]
+use crossterm::{
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
+#[cfg(test)]
 pub(crate) use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+#[cfg(not(test))]
+use ratatui::{
+    Frame, Terminal,
+    backend::CrosstermBackend,
+    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{
+        Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, TableState, Wrap,
+    },
+};
+#[cfg(test)]
 pub(crate) use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
@@ -23,6 +42,9 @@ pub(crate) use ratatui::{
     },
 };
 use serde_json::{Map, Value};
+#[cfg(not(test))]
+use tokio::{sync::mpsc, task::JoinHandle, time::sleep};
+#[cfg(test)]
 pub(crate) use tokio::{sync::mpsc, task::JoinHandle, time::sleep};
 
 use crate::{
@@ -105,6 +127,45 @@ mod terminal;
 #[path = "tui_service.rs"]
 mod tui_service;
 
+#[cfg(not(test))]
+pub(crate) use self::state::run_interactive_shell;
+
+#[cfg(not(test))]
+use self::{
+    group_actions::*,
+    group_delay::*,
+    group_model::*,
+    group_runtime::*,
+    input::*,
+    input_groups::*,
+    input_normal::*,
+    input_palette::*,
+    input_routing::*,
+    input_rules::*,
+    input_subscriptions::*,
+    render::*,
+    render_dashboard::*,
+    render_groups::*,
+    render_output::*,
+    render_palette::*,
+    render_routing::*,
+    render_rules::*,
+    render_shared::*,
+    render_status::*,
+    render_subscriptions::*,
+    rule_commands::*,
+    rule_form::*,
+    rule_model::*,
+    service::*,
+    state::{
+        ShellCommandSpec, ShellSession, TuiApp, TuiExitAction, TuiExitConfirmation, TuiMode,
+        TuiServiceStartup, TuiServiceStartupKind, TuiTerminal,
+    },
+    terminal::*,
+    tui_service::*,
+};
+
+#[cfg(test)]
 pub(crate) use self::{
     group_actions::*, group_delay::*, group_model::*, group_runtime::*, input::*, input_groups::*,
     input_normal::*, input_palette::*, input_routing::*, input_rules::*, input_subscriptions::*,

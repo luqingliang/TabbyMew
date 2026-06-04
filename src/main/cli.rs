@@ -1,6 +1,6 @@
 #[derive(Debug, Parser)]
 #[command(name = "TabbyMew")]
-#[command(about = "A cross-platform Rust proxy core and control console.")]
+#[command(about = "A lightweight, Agent-friendly Rust proxy.")]
 struct Cli {
     #[arg(short, long, global = true, value_name = "FILE")]
     config: Option<PathBuf>,

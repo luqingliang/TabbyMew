@@ -254,6 +254,17 @@ fn cli_json_reports_keep_agent_fields() -> Result<()> {
     assert_eq!(check.status, "ok");
     assert_eq!(check.config, PathBuf::from("config.json"));
     assert!(!check.summary.is_empty());
+    assert_agent_json_fields(
+        &serde_json::to_value(&check)?,
+        &[
+            "schema_version",
+            "ok",
+            "status",
+            "message",
+            "config",
+            "summary",
+        ],
+    );
 
     let state = ProcessState {
         pid: 42,
@@ -281,6 +292,22 @@ fn cli_json_reports_keep_agent_fields() -> Result<()> {
             .map(|control_api| control_api.url.as_str()),
         Some("http://127.0.0.1:9090")
     );
+    assert_agent_json_fields(
+        &serde_json::to_value(&start)?,
+        &[
+            "schema_version",
+            "ok",
+            "status",
+            "message",
+            "pid",
+            "state_dir",
+            "state_file",
+            "config",
+            "log_file",
+            "control_api",
+            "warnings",
+        ],
+    );
 
     let stop = stop_json_report(StopJsonReportInput {
         ok: true,
@@ -298,12 +325,52 @@ fn cli_json_reports_keep_agent_fields() -> Result<()> {
     assert_eq!(stop.status, "stopped");
     assert!(stop.removed_state_file);
     assert!(stop.terminated);
+    assert_agent_json_fields(
+        &serde_json::to_value(&stop)?,
+        &[
+            "schema_version",
+            "ok",
+            "status",
+            "message",
+            "pid",
+            "state_dir",
+            "state_file",
+            "log_file",
+            "removed_state_file",
+            "terminated",
+        ],
+    );
 
     let logs = logs_json_report(Path::new("tabbymew.log"), 10, "one\ntwo\n".to_string());
     assert_eq!(logs.schema_version, CLI_JSON_SCHEMA_VERSION);
     assert_eq!(logs.status, "ok");
     assert_eq!(logs.lines, 10);
     assert_eq!(logs.line_count, 2);
+    assert_agent_json_fields(
+        &serde_json::to_value(&logs)?,
+        &[
+            "schema_version",
+            "ok",
+            "status",
+            "message",
+            "log_file",
+            "lines",
+            "line_count",
+            "content",
+        ],
+    );
 
     Ok(())
+}
+
+fn assert_agent_json_fields(value: &Value, expected: &[&str]) {
+    let object = value
+        .as_object()
+        .expect("agent report must be a JSON object");
+    for field in expected {
+        assert!(
+            object.contains_key(*field),
+            "agent report is missing stable field `{field}` in {value}"
+        );
+    }
 }

@@ -43,6 +43,7 @@ Before making the repository public, keep these files aligned:
 - `LICENSE`
 - `README.md`
 - `README.zh-CN.md`
+- `docs/agent-contract.md`
 - `docs/cli.md`
 - `docs/install.md`
 - `docs/protocol-validation.md`

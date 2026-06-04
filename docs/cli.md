@@ -9,6 +9,10 @@ Commands that document JSON support are safe for automation to call repeatedly.
 Additive fields may appear over time, but existing stable fields should not be
 renamed or removed without bumping `schema_version`.
 
+The canonical agent-facing contract is maintained in
+[`docs/agent-contract.md`](agent-contract.md). This command matrix documents the
+current command surface that implements that contract.
+
 Stable fields shared by first-class JSON reports:
 
 - `schema_version`: integer contract version for the report shape.

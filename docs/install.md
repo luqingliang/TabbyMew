@@ -14,13 +14,7 @@ Windows and macOS are the primary desktop targets:
 ./scripts/build-windows-release.sh
 ```
 
-Linux builds are still available for development and CI-adjacent checks:
-
-```bash
-./scripts/build-linux-release.sh
-```
-
-Each script builds with `cargo build --release --locked --target <triple>` and
+These scripts build with `cargo build --release --locked --target <triple>` and
 then writes:
 
 - `target/release-artifacts/tabbymew-<version>-<target>/`

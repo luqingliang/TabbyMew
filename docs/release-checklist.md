@@ -126,12 +126,6 @@ Each script writes a staged directory, `.tar.gz` archive, and `.sha256`
 checksum. Cross-target builds are opt-in through `TABBYMEW_MACOS_TARGET` and
 `TABBYMEW_WINDOWS_TARGET`.
 
-Linux artifacts can still be built for development and CI-adjacent checks:
-
-```bash
-./scripts/build-linux-release.sh
-```
-
 ## 6. Tagging
 
 After all gates pass:

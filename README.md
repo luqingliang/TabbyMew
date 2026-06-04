@@ -69,6 +69,7 @@ What it optimizes for:
 | Validate config | `cargo run --locked -- check --config examples/config.json` |
 | Public readiness audit | `./scripts/public-readiness-audit.sh` |
 | Local validation gate | `./scripts/validate.sh` |
+| Agent JSON contract | [`docs/agent-contract.md`](docs/agent-contract.md) |
 | Release build | `cargo build --release` |
 | macOS trial package | `./scripts/build-macos-release.sh` |
 | Windows trial package | `./scripts/build-windows-release.sh` |
@@ -93,6 +94,7 @@ config:
   unknown_fields: rejected
 state_default_dir: ~/.tabbymew
 release_binary: target/release/TabbyMew
+agent_contract: docs/agent-contract.md
 completion_gate:
   local: ./scripts/validate.sh
   release: cargo build --release
