@@ -1,5 +1,9 @@
 # TabbyMew
 
+<p align="center">
+  <img src="assets/app-icon.png" alt="TabbyMew application icon" width="160">
+</p>
+
 Language: English | [中文](README.zh-CN.md)
 
 License: [Apache-2.0](LICENSE)
