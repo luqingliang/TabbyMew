@@ -865,6 +865,7 @@ fn shell_command_registry() -> &'static [ShellCommandSpec] {
     COMMANDS
 }
 
+#[cfg(test)]
 fn find_shell_command(name: &str) -> Option<&'static ShellCommandSpec> {
     shell_command_registry()
         .iter()
@@ -877,15 +878,17 @@ struct TuiCommandInvocation {
 }
 
 fn selected_shell_invocation(app: &TuiApp) -> Option<TuiCommandInvocation> {
-    let (name, args) = split_command_query(&app.command_query);
-    exact_shell_command(name)
-        .or_else(|| app.filtered_commands().get(app.selected_command).copied())
+    let (_, args) = split_command_query(&app.command_query);
+    app.filtered_commands()
+        .get(app.selected_command)
+        .copied()
         .map(|command| TuiCommandInvocation {
             command,
             args: args.to_string(),
         })
 }
 
+#[cfg(test)]
 fn exact_shell_command(query: &str) -> Option<&'static ShellCommandSpec> {
     let query = query.trim().trim_start_matches('/');
     if query.is_empty() {

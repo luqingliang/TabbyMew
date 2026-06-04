@@ -207,3 +207,21 @@ fn shell_command_registry_supports_lookup_and_search() {
         TuiMode::Subscriptions
     ));
 }
+
+#[test]
+fn command_palette_invocation_uses_selected_command_not_query_exact_match() {
+    let mut app = test_tui_app();
+    app.mode = TuiMode::CommandPalette;
+    app.command_query = "q".to_string();
+    let quit_index = app
+        .filtered_commands()
+        .iter()
+        .position(|command| command.name == "quit")
+        .expect("quit should match q query");
+    app.selected_command = quit_index;
+
+    let invocation = selected_shell_invocation(&app).expect("selected command");
+
+    assert_eq!(invocation.command.name, "quit");
+    assert_eq!(invocation.args, "");
+}
