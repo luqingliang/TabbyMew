@@ -1,7 +1,7 @@
 # TabbyMew
 
 <p align="center">
-  <img src="assets/app-icon.png" alt="TabbyMew application icon" width="160">
+  <img src="assets/app-icon.png" alt="TabbyMew application icon" width="240">
 </p>
 
 Language: English | [中文](README.zh-CN.md)
