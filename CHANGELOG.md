@@ -10,13 +10,23 @@ relisted in release notes.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-04
+
 ### Added
 
+- Add Subscription in the TUI now accepts either a remote subscription URL or a local file path.
 - Release notes generation from the matching `CHANGELOG.md` version section for future formal GitHub Releases.
 
 ### Changed
 
+- New subscription imports now automatically become active when they are the only configured subscription.
+- Add Subscription URL/File input rendering now keeps entered content visible in narrow TUI layouts.
 - Release checklist now requires finalized changelog notes before tagging.
+
+### Fixed
+
+- Generated subscription profiles now keep the native DNS schema expected by the runtime.
+- Command Palette Enter now always executes the selected command list item instead of an exact command name typed in the search field.
 
 ## [0.1.0] - 2026-06-03
 
