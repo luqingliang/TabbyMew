@@ -1112,7 +1112,19 @@ mod tests {
             subscriptions["subscriptions"][0]["retries"],
             subscription_remote::default_retries()
         );
-        assert_eq!(subscriptions["active"], Value::Null);
+        assert_eq!(subscriptions["active"], "main");
+
+        let status = request_json(addr, "/control/api/status").await?;
+        assert_eq!(status["subscriptions"]["active"], "main");
+        assert_eq!(
+            status["process"]["config_path"],
+            output.display().to_string()
+        );
+        assert_eq!(status["config"]["route"]["final_outbound"], "ss-main");
+        let preferences = crate::process_manager::load_preferences(
+            crate::process_manager::preferences_path(&dir),
+        )?;
+        assert_eq!(preferences.active_config.as_deref(), Some(output.as_path()));
 
         let activated = request_post_json(
             addr,
@@ -1215,6 +1227,7 @@ rules:
         assert_eq!(file["source"], "uploaded_file");
         assert_eq!(file["auto_update"], false);
         assert_eq!(file["next_update_unix"], Value::Null);
+        assert_eq!(subscriptions["active"], "main");
 
         let activated_file = request_post_json(
             addr,

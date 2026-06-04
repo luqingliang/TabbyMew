@@ -43,6 +43,7 @@ async fn subscription_add_response(
         warnings = report.warnings.len(),
         "subscription added"
     );
+    activate_subscription_if_sole(state, runtime, &report.name).await?;
     Ok(report)
 }
 
@@ -88,6 +89,7 @@ async fn subscription_import_file_response(
         warnings = report.warnings.len(),
         "subscription file imported"
     );
+    activate_subscription_if_sole(state, runtime, &report.name).await?;
     Ok(report)
 }
 
@@ -166,8 +168,32 @@ async fn subscription_activate_response(
 ) -> Result<ControlStatusResponse> {
     let request: ControlSubscriptionNameRequest =
         serde_json::from_slice(body).context("subscription activate request body must be JSON")?;
+    activate_subscription_by_name(state, &request.name).await
+}
+
+async fn activate_subscription_if_sole(
+    state: &ControlState,
+    runtime: &subscription_remote::SubscriptionRuntime,
+    name: &str,
+) -> Result<()> {
+    let snapshot = runtime.snapshot().await?;
+    if snapshot.subscriptions.len() == 1
+        && snapshot
+            .subscriptions
+            .first()
+            .is_some_and(|subscription| subscription.name == name)
+    {
+        activate_subscription_by_name(state, name).await?;
+    }
+    Ok(())
+}
+
+async fn activate_subscription_by_name(
+    state: &ControlState,
+    name: &str,
+) -> Result<ControlStatusResponse> {
     let runtime = subscription_runtime(state)?;
-    let subscription = runtime.summary(&request.name).await?;
+    let subscription = runtime.summary(name).await?;
     let config_path = PathBuf::from(&subscription.output);
     let config = Config::load(&config_path).with_context(|| {
         format!(
@@ -214,7 +240,7 @@ async fn subscription_activate_response(
             restore_proxy_runtime(old_proxy.as_ref(), old_proxy_enabled, old_tun_enabled).await;
             bail!(
                 "failed to activate subscription {} from {}: failed to start new proxy listeners: {err:#}; previous listeners restore was attempted",
-                request.name,
+                name,
                 config_path.display()
             );
         }
@@ -222,7 +248,7 @@ async fn subscription_activate_response(
             restore_proxy_runtime(old_proxy.as_ref(), old_proxy_enabled, old_tun_enabled).await;
             bail!(
                 "failed to activate subscription {} from {}: failed to start new TUN listeners: {err:#}; previous listeners restore was attempted",
-                request.name,
+                name,
                 config_path.display()
             );
         }
@@ -235,14 +261,14 @@ async fn subscription_activate_response(
         restore_proxy_runtime(old_proxy.as_ref(), old_proxy_enabled, old_tun_enabled).await;
         bail!(
             "failed to activate subscription {}: failed to update system proxy: {err:#}; previous listeners restore was attempted",
-            request.name
+            name
         );
     }
 
     state.replace_active_config(new_active);
     update_process_state_config(state, &config_path);
     info!(
-        subscription = %request.name,
+        subscription = %name,
         config = %config_path.display(),
         "subscription activated"
     );

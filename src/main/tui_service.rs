@@ -429,7 +429,7 @@ fn open_tui_subscription_add(app: &mut TuiApp) {
     reset_tui_subscription_add_form(app);
     app.clamp_subscription_add_selection();
     app.mode = TuiMode::SubscriptionAdd;
-    app.last_message = "enter subscription name and URL".to_string();
+    app.last_message = "enter subscription name and URL or file path".to_string();
 }
 
 fn reset_tui_subscription_add_form(app: &mut TuiApp) {
@@ -548,21 +548,70 @@ async fn tui_remove_subscription_from_tui(app: &mut TuiApp, name: &str) -> Resul
 
 async fn tui_add_subscription_from_form(app: &mut TuiApp) -> Result<String> {
     let name = app.subscription_add_name.trim();
-    let url = app.subscription_add_url.trim();
+    let source = app.subscription_add_url.trim();
     subscription_remote::validate_name(name)?;
-    subscription_remote::validate_url(url)?;
-    let response = tui_subscription_post_control_json(
-        app,
-        "/control/api/subscriptions/add",
-        serde_json::json!({
-            "name": name,
-            "url": url,
-            "auto_update": app.subscription_add_auto_update,
-        }),
-        "adding subscription",
-    )
-    .await?;
+
+    let response = match tui_subscription_add_source(source)? {
+        TuiSubscriptionAddSource::RemoteUrl(url) => {
+            tui_subscription_post_control_json(
+                app,
+                "/control/api/subscriptions/add",
+                serde_json::json!({
+                    "name": name,
+                    "url": url,
+                    "auto_update": app.subscription_add_auto_update,
+                }),
+                "adding subscription",
+            )
+            .await?
+        }
+        TuiSubscriptionAddSource::LocalFile(path) => {
+            let input = fs::read_to_string(&path).with_context(|| {
+                format!("failed to read subscription file {}", path.display())
+            })?;
+            let filename = path
+                .file_name()
+                .map(|value| value.to_string_lossy().into_owned());
+            tui_subscription_post_control_json(
+                app,
+                "/control/api/subscriptions/import-file",
+                serde_json::json!({
+                    "name": name,
+                    "filename": filename,
+                    "input": input,
+                }),
+                "importing subscription file",
+            )
+            .await?
+        }
+    };
     Ok(format_tui_subscription_apply_report(&response))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TuiSubscriptionAddSource {
+    RemoteUrl(String),
+    LocalFile(PathBuf),
+}
+
+fn tui_subscription_add_source(input: &str) -> Result<TuiSubscriptionAddSource> {
+    if input.trim().is_empty() {
+        bail!("subscription URL or file path is empty");
+    }
+    if subscription_remote::validate_url(input).is_ok() {
+        return Ok(TuiSubscriptionAddSource::RemoteUrl(input.to_string()));
+    }
+    if let Ok(url) = url::Url::parse(input)
+        && url.scheme() == "file"
+    {
+        let path = url
+            .to_file_path()
+            .map_err(|_| {
+                anyhow::anyhow!("subscription file URL cannot be converted to a local path")
+            })?;
+        return Ok(TuiSubscriptionAddSource::LocalFile(path));
+    }
+    Ok(TuiSubscriptionAddSource::LocalFile(PathBuf::from(input)))
 }
 
 async fn tui_subscription_post_control_json(
@@ -583,11 +632,15 @@ async fn tui_subscription_post_control_json(
 
 fn format_tui_subscription_apply_report(response: &Value) -> String {
     let name = value_str(response, &["name"]).unwrap_or("-");
+    let action = match value_str(response, &["source"]) {
+        Some("uploaded_file") => "imported",
+        _ => "added",
+    };
     let imported = value_u64(response, &["imported"])
         .map(|value| value.to_string())
         .unwrap_or_else(|| "-".to_string());
     let warnings = value_array_len(response, &["warnings"]).unwrap_or(0);
-    format!("subscription {name} added ({imported} imported, {warnings} warnings)")
+    format!("subscription {name} {action} ({imported} imported, {warnings} warnings)")
 }
 
 fn format_tui_subscription_refresh_outcomes(response: &Value) -> String {

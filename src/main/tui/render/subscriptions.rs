@@ -171,7 +171,7 @@ pub(super) fn draw_tui_subscription_actions(frame: &mut Frame<'_>, app: &TuiApp)
 }
 
 pub(super) fn draw_tui_subscription_add(frame: &mut Frame<'_>, app: &TuiApp) {
-    let area = centered_rect(78, 42, frame.area());
+    let area = tui_subscription_add_area(frame.area());
     frame.render_widget(Clear, area);
     let block = Block::default()
         .title(" Add Subscription ")
@@ -186,34 +186,26 @@ pub(super) fn draw_tui_subscription_add(frame: &mut Frame<'_>, app: &TuiApp) {
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(3),
-            Constraint::Length(4),
+            Constraint::Min(4),
         ])
         .split(inner);
 
-    let name = Paragraph::new(app.subscription_add_name.as_str())
-        .block(
-            Block::default()
-                .title(" Name ")
-                .borders(Borders::ALL)
-                .border_style(tui_subscription_add_field_style(
-                    app,
-                    TUI_SUBSCRIPTION_ADD_NAME_FIELD,
-                )),
-        )
-        .wrap(Wrap { trim: false });
+    let name = tui_subscription_add_input(
+        app,
+        " Name ",
+        app.subscription_add_name.as_str(),
+        TUI_SUBSCRIPTION_ADD_NAME_FIELD,
+        chunks[0],
+    );
     frame.render_widget(name, chunks[0]);
 
-    let url = Paragraph::new(app.subscription_add_url.as_str())
-        .block(
-            Block::default()
-                .title(" URL ")
-                .borders(Borders::ALL)
-                .border_style(tui_subscription_add_field_style(
-                    app,
-                    TUI_SUBSCRIPTION_ADD_URL_FIELD,
-                )),
-        )
-        .wrap(Wrap { trim: false });
+    let url = tui_subscription_add_input(
+        app,
+        " URL / File ",
+        app.subscription_add_url.as_str(),
+        TUI_SUBSCRIPTION_ADD_URL_FIELD,
+        chunks[1],
+    );
     frame.render_widget(url, chunks[1]);
 
     let auto_update = Paragraph::new(if app.subscription_add_auto_update {
@@ -234,7 +226,7 @@ pub(super) fn draw_tui_subscription_add(frame: &mut Frame<'_>, app: &TuiApp) {
 
     let help = Paragraph::new(vec![
         Line::from("Tab switches fields. Left/Right toggles auto update."),
-        Line::from("Enter fetches, imports, and saves. Esc cancels."),
+        Line::from("Enter imports URL or local file. Auto update applies to URL subscriptions."),
         Line::from(app.last_message.as_str()),
     ])
     .block(Block::default().borders(Borders::ALL));
@@ -249,4 +241,81 @@ pub(super) fn tui_subscription_add_field_style(app: &TuiApp, field: usize) -> St
     } else {
         Style::default().fg(Color::DarkGray)
     }
+}
+
+pub(super) fn tui_subscription_add_area(area: Rect) -> Rect {
+    centered_rect_with_min_size(78, 58, 54, 15, area)
+}
+
+fn centered_rect_with_min_size(
+    width_percent: u16,
+    height_percent: u16,
+    min_width: u16,
+    min_height: u16,
+    area: Rect,
+) -> Rect {
+    let rect = centered_rect(width_percent, height_percent, area);
+    let width = rect.width.max(min_width).min(area.width);
+    let height = rect.height.max(min_height).min(area.height);
+    Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    }
+}
+
+fn tui_subscription_add_input(
+    app: &TuiApp,
+    title: &'static str,
+    value: &str,
+    field: usize,
+    area: Rect,
+) -> Paragraph<'static> {
+    let text = visible_tui_subscription_input_value(value, tui_subscription_add_input_width(area))
+        .into_owned();
+    Paragraph::new(Line::from(Span::styled(
+        text,
+        Style::default().fg(Color::White),
+    )))
+    .block(
+        Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_style(tui_subscription_add_field_style(app, field)),
+    )
+}
+
+pub(super) fn visible_tui_subscription_input_value(
+    value: &str,
+    width: u16,
+) -> std::borrow::Cow<'_, str> {
+    let width = usize::from(width);
+    if width == 0 {
+        return std::borrow::Cow::Borrowed("");
+    }
+
+    let value_len = value.chars().count();
+    if value_len <= width {
+        return std::borrow::Cow::Borrowed(value);
+    }
+
+    if width <= 3 {
+        return std::borrow::Cow::Owned(tui_subscription_input_tail(value, width));
+    }
+
+    std::borrow::Cow::Owned(format!(
+        "...{}",
+        tui_subscription_input_tail(value, width - 3)
+    ))
+}
+
+fn tui_subscription_add_input_width(area: Rect) -> u16 {
+    area.width.saturating_sub(2)
+}
+
+fn tui_subscription_input_tail(value: &str, width: usize) -> String {
+    let mut chars = value.chars().rev().take(width).collect::<Vec<_>>();
+    chars.reverse();
+    chars.into_iter().collect()
 }

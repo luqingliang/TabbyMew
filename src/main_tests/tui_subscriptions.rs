@@ -93,6 +93,16 @@ fn formats_tui_subscription_operation_results() {
         format_tui_subscription_apply_report(&add),
         "subscription main added (3 imported, 1 warnings)"
     );
+    let file = serde_json::json!({
+        "name": "file",
+        "source": "uploaded_file",
+        "imported": 2,
+        "warnings": []
+    });
+    assert_eq!(
+        format_tui_subscription_apply_report(&file),
+        "subscription file imported (2 imported, 0 warnings)"
+    );
 
     let refresh = serde_json::json!([
         {
@@ -117,4 +127,56 @@ fn formats_tui_subscription_operation_results() {
         first_tui_subscription_refresh_message(&refresh).as_deref(),
         Some("subscription main updated (4 imported, 0 warnings)")
     );
+}
+
+#[test]
+fn clips_subscription_add_inputs_to_visible_tail() {
+    assert_eq!(
+        visible_tui_subscription_input_value("https://example.com/sub", 40),
+        "https://example.com/sub"
+    );
+    assert_eq!(
+        visible_tui_subscription_input_value("https://example.com/sub", 0),
+        ""
+    );
+
+    let url = "https://example.com/subscription/path?token=abcdef";
+    let visible = visible_tui_subscription_input_value(url, 24).into_owned();
+    assert_eq!(visible.chars().count(), 24);
+    assert!(visible.starts_with("..."));
+    assert!(visible.ends_with("path?token=abcdef"));
+    assert_eq!(visible_tui_subscription_input_value(url, 3), "def");
+}
+
+#[test]
+fn subscription_add_area_keeps_field_rows_visible() {
+    let area = tui_subscription_add_area(Rect::new(0, 0, 100, 24));
+    assert!(area.height >= 15);
+    assert!(area.height.saturating_sub(2) >= 13);
+
+    let narrow_area = tui_subscription_add_area(Rect::new(0, 0, 40, 10));
+    assert_eq!(narrow_area.width, 40);
+    assert_eq!(narrow_area.height, 10);
+}
+
+#[test]
+fn classifies_subscription_add_url_or_file_source() -> Result<()> {
+    assert_eq!(
+        tui_subscription_add_source("https://example.com/sub?token=abc")?,
+        TuiSubscriptionAddSource::RemoteUrl("https://example.com/sub?token=abc".to_string())
+    );
+    assert_eq!(
+        tui_subscription_add_source("/tmp/subscription.yaml")?,
+        TuiSubscriptionAddSource::LocalFile(PathBuf::from("/tmp/subscription.yaml"))
+    );
+    assert_eq!(
+        tui_subscription_add_source("relative/subscription.yaml")?,
+        TuiSubscriptionAddSource::LocalFile(PathBuf::from("relative/subscription.yaml"))
+    );
+    assert_eq!(
+        tui_subscription_add_source("file:///tmp/subscription.yaml")?,
+        TuiSubscriptionAddSource::LocalFile(PathBuf::from("/tmp/subscription.yaml"))
+    );
+    assert!(tui_subscription_add_source("").is_err());
+    Ok(())
 }
