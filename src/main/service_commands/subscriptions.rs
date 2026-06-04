@@ -47,6 +47,56 @@ pub(super) async fn add_subscription(command: SubscriptionAddCommand) -> Result<
     Ok(())
 }
 
+pub(super) async fn import_file_subscription(command: SubscriptionImportFileCommand) -> Result<()> {
+    subscription_remote::validate_name(&command.name)?;
+    let input = command.input;
+    let text = fs::read_to_string(&input)
+        .with_context(|| format!("failed to read subscription file {}", input.display()))?;
+    if text.trim().is_empty() {
+        bail!("subscription file is empty");
+    }
+
+    let runtime = subscription_runtime(command.state_dir);
+    let filename = input
+        .file_name()
+        .map(|value| value.to_string_lossy().into_owned());
+    let record = subscription_remote::SubscriptionRecord {
+        name: command.name.clone(),
+        source: subscription_remote::SubscriptionSource::UploadedFile,
+        url: subscription_remote::uploaded_file_url(filename.as_deref()),
+        output: runtime.output_path_for(&command.name)?,
+        inbound_tag: command.inbound_tag,
+        listen: command.listen.unwrap_or_else(Config::default_local_listen),
+        listen_port: command
+            .listen_port
+            .unwrap_or_else(Config::default_local_listen_port),
+        user_agent: subscription_remote::default_user_agent(),
+        auto_update: false,
+        update_interval_seconds: subscription_remote::default_update_interval_seconds(),
+        timeout_ms: subscription_remote::default_timeout_ms(),
+        retries: subscription_remote::default_retries(),
+        last_checked_unix: None,
+        last_updated_unix: None,
+        last_success_unix: None,
+        next_update_unix: None,
+        last_error: None,
+        imported: None,
+        warnings: Vec::new(),
+        last_etag: None,
+        last_modified: None,
+        last_final_url: None,
+    };
+
+    let report = runtime.import_uploaded(record, &text).await?;
+    if command.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    print_subscription_apply_report("imported", &report);
+    println!("store: {}", runtime.store_path().display());
+    Ok(())
+}
+
 pub(super) async fn list_subscriptions(command: SubscriptionListCommand) -> Result<()> {
     let runtime = subscription_runtime(command.state_dir);
     let snapshot = runtime.snapshot().await?;

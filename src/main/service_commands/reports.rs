@@ -58,23 +58,6 @@ pub(super) struct StopJsonReportInput<'a> {
 }
 
 #[derive(Debug, Serialize)]
-pub(super) struct ImportJsonReport {
-    pub(super) schema_version: u16,
-    pub(super) ok: bool,
-    pub(super) status: &'static str,
-    pub(super) message: String,
-    pub(super) input: PathBuf,
-    pub(super) output: Option<PathBuf>,
-    pub(super) imported: usize,
-    pub(super) protocol_counts: BTreeMap<String, usize>,
-    pub(super) final_outbound: String,
-    pub(super) policy_groups: usize,
-    pub(super) rules: usize,
-    pub(super) warnings: Vec<String>,
-    pub(super) config: Option<Value>,
-}
-
-#[derive(Debug, Serialize)]
 pub(super) struct LogsJsonReport {
     pub(super) schema_version: u16,
     pub(super) ok: bool,
@@ -141,46 +124,6 @@ pub(super) fn stop_json_report(input: StopJsonReportInput<'_>) -> StopJsonReport
         log_file: input.log_file.map(Path::to_path_buf),
         removed_state_file: input.removed_state_file,
         terminated: input.terminated,
-    }
-}
-
-pub(super) fn import_json_report(
-    result: &subscription::ImportResult,
-    input: &Path,
-    output: Option<&Path>,
-    config: Option<Value>,
-) -> ImportJsonReport {
-    let message = match output {
-        Some(output) => format!(
-            "imported {} outbound(s) from {} into {}",
-            result.imported,
-            input.display(),
-            output.display()
-        ),
-        None => format!(
-            "imported {} outbound(s) from {}",
-            result.imported,
-            input.display()
-        ),
-    };
-    ImportJsonReport {
-        schema_version: CLI_JSON_SCHEMA_VERSION,
-        ok: true,
-        status: "imported",
-        message,
-        input: input.to_path_buf(),
-        output: output.map(Path::to_path_buf),
-        imported: result.imported,
-        protocol_counts: result
-            .protocol_counts()
-            .into_iter()
-            .map(|(protocol, count)| (protocol.to_string(), count))
-            .collect(),
-        final_outbound: result.config.route.final_outbound.clone(),
-        policy_groups: result.config.policy_groups.len(),
-        rules: result.config.route.rules.len(),
-        warnings: result.warnings.clone(),
-        config,
     }
 }
 

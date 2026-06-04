@@ -33,12 +33,12 @@ done
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
-run cargo run --locked -- import --input examples/subscription-links.txt --output "$tmpdir/imported-links.json"
-run cargo run --locked -- check --config "$tmpdir/imported-links.json"
-run cargo run --locked -- import --input examples/clash-profile.yaml --output "$tmpdir/imported-clash.json"
-run cargo run --locked -- check --config "$tmpdir/imported-clash.json"
-run cargo run --locked -- config normalize --config "$tmpdir/imported-clash.json" --output "$tmpdir/imported-clash.redacted.json"
-run cargo run --locked -- config normalize --config "$tmpdir/imported-clash.json" --show-secrets --output "$tmpdir/imported-clash.full.json"
+run cargo run --locked -- subscription import-file links examples/subscription-links.txt --state-dir "$tmpdir/state"
+run cargo run --locked -- check --config "$tmpdir/state/profiles/subscriptions/links.json"
+run cargo run --locked -- subscription import-file clash examples/clash-profile.yaml --state-dir "$tmpdir/state"
+run cargo run --locked -- check --config "$tmpdir/state/profiles/subscriptions/clash.json"
+run cargo run --locked -- config normalize --config "$tmpdir/state/profiles/subscriptions/clash.json" --output "$tmpdir/imported-clash.redacted.json"
+run cargo run --locked -- config normalize --config "$tmpdir/state/profiles/subscriptions/clash.json" --show-secrets --output "$tmpdir/imported-clash.full.json"
 
 unsupported_configs=()
 if [[ -d examples/unsupported ]]; then

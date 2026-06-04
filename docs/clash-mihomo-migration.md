@@ -2,34 +2,35 @@
 
 This guide covers local and remote import paths for common Clash/Mihomo-style profiles. Remote subscription URLs can be saved, manually updated, automatically refreshed while TabbyMew is running, and managed from the CLI/TUI with validated last-good output files. Remote rule sets and advanced policy group behavior such as URL testing, fallback, and load balancing are not implemented yet. Select proxy groups, supported DNS fields, and common rules are imported from Clash/Mihomo profiles, and local file-backed route rule sets remain available for hand-written routing.
 
-Clash/Mihomo profiles are import input, not native runtime configs. Run `import`
-or `subscription add` first; the generated TabbyMew JSON uses strict native
-field names such as `policy_groups`, `tag`, and `outbounds`.
+Clash/Mihomo profiles are import input, not native runtime configs. Run
+`subscription import-file` or `subscription add` first; the generated TabbyMew
+JSON uses strict native field names such as `policy_groups`, `tag`, and
+`outbounds`.
 
 ## Basic Workflow
 
 Import a local profile:
 
 ```bash
-cargo run -- import --input examples/clash-profile.yaml --output /tmp/tabbymew-imported.json
+cargo run -- subscription import-file local examples/clash-profile.yaml --state-dir /tmp/tabbymew-state
 ```
 
 Validate the generated config:
 
 ```bash
-cargo run -- check --config /tmp/tabbymew-imported.json
+cargo run -- check --config /tmp/tabbymew-state/profiles/subscriptions/local.json
 ```
 
 Create a redacted copy for review or issue reports:
 
 ```bash
-cargo run -- config normalize --config /tmp/tabbymew-imported.json --output /tmp/tabbymew-redacted.json
+cargo run -- config normalize --config /tmp/tabbymew-state/profiles/subscriptions/local.json --output /tmp/tabbymew-redacted.json
 ```
 
 Run the generated config as a foreground service:
 
 ```bash
-cargo run -- --config /tmp/tabbymew-imported.json run
+cargo run -- --config /tmp/tabbymew-state/profiles/subscriptions/local.json run
 ```
 
 Use `--show-secrets` only for local config cleanup when the normalized output should remain runnable.
@@ -57,7 +58,7 @@ cargo run -- subscription set main --no-auto-update
 cargo run -- subscription remove main
 ```
 
-Remote subscriptions are persisted in `~/.tabbymew/tabbymew-subscriptions.json` by default. Generated subscription configs are written under `~/.tabbymew/profiles/subscriptions/<name>.json` by default. These files can contain subscription URLs and proxy credentials, so TabbyMew writes them with private file permissions where the platform supports it. Use `TABBYMEW_STATE_DIR` or `--state-dir` to isolate both the store and generated configs. `add` and `update` fetch HTTP/HTTPS URLs with timeout, retry, and redirect handling, then reuse the same importer and runtime validation as local files. New remote subscriptions auto-update every 86400 seconds by default while `run` or `start` is active. CLI/TUI subscription management can add remote subscriptions, refresh saved subscriptions, enable or disable automatic refresh, activate generated configs, and remove saved entries. The generated config is replaced only after fetch, import conversion, and validation all pass; failed updates record `last_error` and keep the previous generated config untouched. CLI output redacts query strings and URL credentials.
+Saved subscriptions are persisted in `~/.tabbymew/tabbymew-subscriptions.json` by default. Generated subscription configs are written under `~/.tabbymew/profiles/subscriptions/<name>.json` by default. These files can contain subscription URLs and proxy credentials, so TabbyMew writes them with private file permissions where the platform supports it. Use `TABBYMEW_STATE_DIR` or `--state-dir` to isolate both the store and generated configs. `add` and `update` fetch HTTP/HTTPS URLs with timeout, retry, and redirect handling, then reuse the same importer and runtime validation as local files. `import-file` imports and saves a local file-backed subscription without enabling auto-update. New remote subscriptions auto-update every 86400 seconds by default while `run` or `start` is active. CLI/TUI subscription management can add remote subscriptions, import local subscription files, refresh saved remote subscriptions, enable or disable automatic refresh, activate generated configs, and remove saved entries. The generated config is replaced only after fetch, import conversion, and validation all pass; failed updates record `last_error` and keep the previous generated config untouched. CLI output redacts query strings and URL credentials.
 
 The last activated subscription config and runtime routing choices are persisted in `~/.tabbymew/tabbymew-preferences.json` by default. If `run` or `start` is launched later without an explicit `--config`, TabbyMew restores that generated config when it still exists, then reapplies saved route mode, global target, and policy group selections that still match the current config.
 

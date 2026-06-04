@@ -19,7 +19,6 @@ mod system_proxy;
 
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
     env, fs,
     io::{self, IsTerminal, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
@@ -106,58 +105,14 @@ async fn main() -> Result<()> {
                 Ok(())
             }
         },
-        Command::Import(command) => {
-            init_logging("info", None)?;
-            let input = command.input;
-            let output_path = command.output;
-            let json = command.json;
-            let text = fs::read_to_string(&input)
-                .with_context(|| format!("failed to read import input {}", input.display()))?;
-            let options = subscription::ImportOptions {
-                inbound_tag: command.inbound_tag,
-                listen: command.listen.unwrap_or_else(Config::default_local_listen),
-                listen_port: command
-                    .listen_port
-                    .unwrap_or_else(Config::default_local_listen_port),
-            };
-            let result = subscription::import_from_text(&text, options)
-                .with_context(|| format!("failed to import {}", input.display()))?;
-            validate_runtime_config(&result.config, None)?;
-            let output = serde_json::to_string_pretty(&result.config)
-                .context("failed to serialize imported config")?;
-            match output_path {
-                Some(path) => {
-                    fs_security::write_private_file(&path, format!("{output}\n")).with_context(
-                        || format!("failed to write imported config {}", path.display()),
-                    )?;
-                    if json {
-                        let report =
-                            import_json_report(&result, &input, Some(path.as_path()), None);
-                        println!("{}", serde_json::to_string_pretty(&report)?);
-                    } else {
-                        let mut stdout = io::stdout().lock();
-                        print_import_report(&mut stdout, &result, &input, Some(path.as_path()))?;
-                    }
-                }
-                None => {
-                    if json {
-                        let config_json = serde_json::to_value(&result.config)
-                            .context("failed to serialize imported config as JSON value")?;
-                        let report = import_json_report(&result, &input, None, Some(config_json));
-                        println!("{}", serde_json::to_string_pretty(&report)?);
-                    } else {
-                        let mut stderr = io::stderr().lock();
-                        print_import_report(&mut stderr, &result, &input, None)?;
-                        println!("{output}");
-                    }
-                }
-            }
-            Ok(())
-        }
         Command::Subscription(command) => match command.command {
             SubscriptionSubcommand::Add(command) => {
                 init_logging("info", None)?;
                 add_subscription(command).await
+            }
+            SubscriptionSubcommand::ImportFile(command) => {
+                init_logging("info", None)?;
+                import_file_subscription(command).await
             }
             SubscriptionSubcommand::List(command) => list_subscriptions(command).await,
             SubscriptionSubcommand::Update(command) => {

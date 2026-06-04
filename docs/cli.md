@@ -126,12 +126,12 @@ standard CLI/API diagnostic.
 | `TabbyMew check` | Validate the selected config without starting listeners | yes |
 | `TabbyMew config schema` | Print the native config schema contract | always |
 | `TabbyMew config normalize` | Print stable pretty JSON with secrets redacted by default | no |
-| `TabbyMew import` | Import local subscription/share-link text into a config | yes |
 | `TabbyMew subscription add` | Fetch, import, validate, and save a remote subscription | yes |
-| `TabbyMew subscription list` | List saved remote subscriptions | yes |
+| `TabbyMew subscription import-file` | Import, validate, and save a local subscription file | yes |
+| `TabbyMew subscription list` | List saved subscriptions | yes |
 | `TabbyMew subscription update` | Update one or all saved remote subscriptions | yes |
-| `TabbyMew subscription set` | Update saved remote subscription settings | yes |
-| `TabbyMew subscription remove` | Remove a saved remote subscription entry | yes |
+| `TabbyMew subscription set` | Update saved subscription settings | yes |
+| `TabbyMew subscription remove` | Remove a saved subscription entry | yes |
 
 ## Control API
 

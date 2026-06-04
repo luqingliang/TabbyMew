@@ -204,11 +204,12 @@ fn parses_agent_json_lifecycle_commands() -> Result<()> {
 
     let cli = Cli::try_parse_from([
         "TabbyMew",
-        "import",
-        "--input",
+        "subscription",
+        "import-file",
+        "main",
         "examples/subscription-links.txt",
-        "--output",
-        "/tmp/profile.json",
+        "--state-dir",
+        "/tmp/tabbymew-state",
         "--inbound-tag",
         "hybrid",
         "--listen",
@@ -218,19 +219,28 @@ fn parses_agent_json_lifecycle_commands() -> Result<()> {
         "--json",
     ])?;
     match cli.command {
-        Some(Command::Import(command)) => {
-            assert_eq!(
-                command.input,
-                PathBuf::from("examples/subscription-links.txt")
-            );
-            assert_eq!(command.output, Some(PathBuf::from("/tmp/profile.json")));
-            assert_eq!(command.inbound_tag, "hybrid");
-            assert_eq!(command.listen.as_deref(), Some("0.0.0.0"));
-            assert_eq!(command.listen_port, Some(17891));
-            assert!(command.json);
-        }
+        Some(Command::Subscription(command)) => match command.command {
+            SubscriptionSubcommand::ImportFile(command) => {
+                assert_eq!(command.name, "main");
+                assert_eq!(
+                    command.input,
+                    PathBuf::from("examples/subscription-links.txt")
+                );
+                assert_eq!(
+                    command.state_dir,
+                    Some(PathBuf::from("/tmp/tabbymew-state"))
+                );
+                assert_eq!(command.inbound_tag, "hybrid");
+                assert_eq!(command.listen.as_deref(), Some("0.0.0.0"));
+                assert_eq!(command.listen_port, Some(17891));
+                assert!(command.json);
+            }
+            other => panic!("unexpected subscription command: {other:?}"),
+        },
         other => panic!("unexpected command: {other:?}"),
     }
+
+    assert!(Cli::try_parse_from(["TabbyMew", "import"]).is_err());
 
     Ok(())
 }
@@ -294,43 +304,6 @@ fn cli_json_reports_keep_agent_fields() -> Result<()> {
     assert_eq!(logs.status, "ok");
     assert_eq!(logs.lines, 10);
     assert_eq!(logs.line_count, 2);
-
-    Ok(())
-}
-
-#[test]
-fn import_json_report_omits_config_when_output_is_written() -> Result<()> {
-    let result = subscription::import_from_text(
-        "ss://YWVzLTEyOC1nY206ZXhhbXBsZS1wYXNzd29yZA==@example.com:8388#ss-main",
-        subscription::ImportOptions {
-            inbound_tag: "hybrid-in".to_string(),
-            listen: Config::default_local_listen(),
-            listen_port: Config::default_local_listen_port(),
-        },
-    )?;
-
-    let report = import_json_report(
-        &result,
-        Path::new("subscription.txt"),
-        Some(Path::new("profile.json")),
-        None,
-    );
-    assert!(report.ok);
-    assert_eq!(report.schema_version, CLI_JSON_SCHEMA_VERSION);
-    assert_eq!(report.status, "imported");
-    assert_eq!(report.imported, 1);
-    assert_eq!(report.output, Some(PathBuf::from("profile.json")));
-    assert_eq!(report.protocol_counts.get("shadowsocks"), Some(&1));
-    assert!(report.config.is_none());
-
-    let inline_report = import_json_report(
-        &result,
-        Path::new("subscription.txt"),
-        None,
-        Some(serde_json::json!({ "kind": "inline" })),
-    );
-    assert!(inline_report.output.is_none());
-    assert!(inline_report.config.is_some());
 
     Ok(())
 }

@@ -57,12 +57,10 @@ enum Command {
     Example,
     #[command(about = "Inspect or rewrite local config files")]
     Config(ConfigCommand),
-    #[command(about = "Import local subscriptions or share-link lists")]
-    Import(ImportCommand),
     #[command(
         name = "subscription",
         alias = "subscriptions",
-        about = "Manage remote subscription URLs"
+        about = "Manage subscriptions"
     )]
     Subscription(SubscriptionCommand),
     #[command(name = "internal-tun-helper", hide = true)]
@@ -453,27 +451,6 @@ struct NormalizeCommand {
 }
 
 #[derive(Debug, Parser)]
-struct ImportCommand {
-    #[arg(short, long)]
-    input: PathBuf,
-
-    #[arg(short, long)]
-    output: Option<PathBuf>,
-
-    #[arg(long, default_value = "hybrid-in")]
-    inbound_tag: String,
-
-    #[arg(long)]
-    listen: Option<String>,
-
-    #[arg(long)]
-    listen_port: Option<u16>,
-
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Parser)]
 struct SubscriptionCommand {
     #[command(subcommand)]
     command: SubscriptionSubcommand,
@@ -483,13 +460,18 @@ struct SubscriptionCommand {
 enum SubscriptionSubcommand {
     #[command(about = "Fetch, import, validate, and save a remote subscription")]
     Add(SubscriptionAddCommand),
-    #[command(about = "List saved remote subscriptions")]
+    #[command(
+        name = "import-file",
+        about = "Import, validate, and save a local subscription file"
+    )]
+    ImportFile(SubscriptionImportFileCommand),
+    #[command(about = "List saved subscriptions")]
     List(SubscriptionListCommand),
-    #[command(about = "Update one saved remote subscription or all subscriptions")]
+    #[command(about = "Update one saved remote subscription or all remote subscriptions")]
     Update(SubscriptionUpdateCommand),
-    #[command(about = "Update saved remote subscription settings")]
+    #[command(about = "Update saved subscription settings")]
     Set(SubscriptionSetCommand),
-    #[command(about = "Remove a saved remote subscription entry")]
+    #[command(about = "Remove a saved subscription entry")]
     Remove(SubscriptionRemoveCommand),
 }
 
@@ -524,6 +506,27 @@ struct SubscriptionAddCommand {
 
     #[arg(long, default_value = subscription_remote::DEFAULT_USER_AGENT)]
     user_agent: String,
+
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Parser)]
+struct SubscriptionImportFileCommand {
+    name: String,
+    input: PathBuf,
+
+    #[arg(long)]
+    state_dir: Option<PathBuf>,
+
+    #[arg(long, default_value = "hybrid-in")]
+    inbound_tag: String,
+
+    #[arg(long)]
+    listen: Option<String>,
+
+    #[arg(long)]
+    listen_port: Option<u16>,
 
     #[arg(long)]
     json: bool,

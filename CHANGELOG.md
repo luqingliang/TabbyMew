@@ -10,6 +10,14 @@ relisted in release notes.
 
 ## [Unreleased]
 
+### Added
+
+- Add `subscription import-file` CLI support for importing and saving local subscription files.
+
+### Removed
+
+- Remove the standalone `import` CLI command.
+
 ## [0.1.1] - 2026-06-04
 
 ### Added

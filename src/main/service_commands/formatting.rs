@@ -412,52 +412,6 @@ pub(super) fn format_duration(seconds: u64) -> String {
     }
 }
 
-pub(super) fn print_import_report(
-    mut writer: impl Write,
-    result: &subscription::ImportResult,
-    input: &Path,
-    output: Option<&Path>,
-) -> Result<()> {
-    match output {
-        Some(output) => writeln!(
-            writer,
-            "imported {} outbound(s) from {} into {}",
-            result.imported,
-            input.display(),
-            output.display()
-        )?,
-        None => writeln!(
-            writer,
-            "imported {} outbound(s) from {}",
-            result.imported,
-            input.display()
-        )?,
-    }
-
-    writeln!(writer, "protocols:")?;
-    for (protocol, count) in result.protocol_counts() {
-        writeln!(writer, "  {protocol}: {count}")?;
-    }
-    writeln!(
-        writer,
-        "routing: final={}, policy_groups={}, rules={}",
-        result.config.route.final_outbound,
-        result.config.policy_groups.len(),
-        result.config.route.rules.len()
-    )?;
-
-    if result.warnings.is_empty() {
-        writeln!(writer, "warnings: none")?;
-    } else {
-        writeln!(writer, "warnings: {}", result.warnings.len())?;
-        for warning in &result.warnings {
-            writeln!(writer, "  - {warning}")?;
-        }
-    }
-
-    Ok(())
-}
-
 pub(super) fn init_logging(level: &str, log_file: Option<&Path>) -> Result<()> {
     let filter = EnvFilter::try_from_default_env()
         .or_else(|_| EnvFilter::try_new(level))

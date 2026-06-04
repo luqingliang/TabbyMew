@@ -122,6 +122,7 @@ cargo run --locked -- tun on --json
 
 # rules and subscriptions
 cargo run --locked -- rules list --json
+cargo run --locked -- subscription import-file local examples/clash-profile.yaml --json
 cargo run --locked -- subscription list --json
 cargo run --locked -- subscription update main --json
 
@@ -288,8 +289,8 @@ generated_output:
 ```
 
 ```bash
-cargo run --locked -- import --input examples/subscription-links.txt --output /tmp/tabbymew-imported.json
-cargo run --locked -- import --input examples/clash-profile.yaml --output /tmp/tabbymew-imported.json
+cargo run --locked -- subscription import-file links examples/subscription-links.txt
+cargo run --locked -- subscription import-file clash examples/clash-profile.yaml
 cargo run --locked -- subscription add main 'https://example.com/subscription'
 cargo run --locked -- subscription update main
 cargo run --locked -- subscription list --json
