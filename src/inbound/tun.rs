@@ -1,22 +1,29 @@
-use std::{fs, net::SocketAddr, path::PathBuf, time::Duration};
+use std::{collections::BTreeMap, fs, net::SocketAddr, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
 use std::path::Path;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use std::sync::{Arc, OnceLock};
 #[cfg(target_os = "macos")]
 use tokio::process::Command;
 #[cfg(target_os = "windows")]
 use tokio::time::sleep;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
-    task::JoinSet,
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    net::{
+        TcpListener, TcpStream,
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+    },
+    sync::{mpsc, oneshot, watch},
+    task::{JoinHandle, JoinSet},
     time::timeout,
 };
-use tracing::debug;
+use tracing::{debug, info, warn};
 use tun2proxy::{Args as Tun2ProxyArgs, CancellationToken};
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -45,12 +52,6 @@ pub struct PrivilegedTunHelperCommand {
 
     #[arg(long)]
     pub(crate) token_file: PathBuf,
-
-    #[arg(long)]
-    pub(crate) mtu: u16,
-
-    #[arg(last = true, required = true)]
-    pub(crate) tun2proxy_args: Vec<String>,
 }
 
 pub async fn serve(options: TunInboundOptions) -> Result<()> {
@@ -269,13 +270,13 @@ async fn run_tun2proxy_for_current_context(
     #[cfg(target_os = "macos")]
     {
         if _auto_route && current_privilege_verified() == Some(false) {
-            return run_macos_privileged_helper(argv, mtu).await;
+            return run_macos_privileged_helper(argv, mtu, shutdown).await;
         }
     }
     #[cfg(target_os = "windows")]
     {
         if current_privilege_verified() != Some(true) {
-            return run_windows_privileged_helper(argv, mtu).await;
+            return run_windows_privileged_helper(argv, mtu, shutdown).await;
         }
     }
 
@@ -323,7 +324,6 @@ pub async fn run_privileged_helper_command(command: PrivilegedTunHelperCommand) 
         bail!("privileged TUN helper must run as administrator/root");
     }
 
-    let args = parse_tun2proxy_args(command.tun2proxy_args)?;
     let token = fs::read_to_string(&command.token_file).with_context(|| {
         format!(
             "failed to read TUN helper control token file {}",
@@ -342,50 +342,236 @@ pub async fn run_privileged_helper_command(command: PrivilegedTunHelperCommand) 
         .await
         .context("failed to write TUN helper control token")?;
 
-    let shutdown = CancellationToken::new();
-    let mut monitor = tokio::spawn(monitor_parent_control(control, shutdown.clone()));
-    let mut runner = tokio::spawn(run_tun2proxy(args, command.mtu, shutdown.clone()));
-    tokio::select! {
-        result = &mut runner => {
-            shutdown.cancel();
-            monitor.abort();
-            match result {
-                Ok(result) => result,
-                Err(err) => Err(err).context("privileged TUN helper task panicked"),
-            }
-        }
-        result = &mut monitor => {
-            shutdown.cancel();
-            let control_result = match result {
-                Ok(result) => result,
-                Err(err) => Err(err).context("TUN helper control monitor panicked"),
-            };
-            control_result?;
-            match timeout(Duration::from_secs(5), &mut runner).await {
-                Ok(Ok(result)) => result,
-                Ok(Err(err)) => Err(err).context("privileged TUN helper task panicked"),
-                Err(_) => {
-                    runner.abort();
-                    bail!("timed out waiting for privileged TUN helper shutdown");
+    run_privileged_helper_command_loop(control).await
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PrivilegedTunHelperEnvelope {
+    id: u64,
+    #[serde(flatten)]
+    command: PrivilegedTunHelperCommandKind,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "command", rename_all = "snake_case")]
+enum PrivilegedTunHelperCommandKind {
+    Start {
+        mtu: u16,
+        tun2proxy_args: Vec<String>,
+    },
+    Stop,
+    Shutdown,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum PrivilegedTunHelperOutput {
+    Response {
+        id: u64,
+        ok: bool,
+        error: Option<String>,
+    },
+    Event {
+        event: PrivilegedTunHelperEvent,
+        error: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PrivilegedTunHelperEvent {
+    TunStopped,
+}
+
+struct PrivilegedTunRunner {
+    shutdown: CancellationToken,
+    task: JoinHandle<Result<()>>,
+}
+
+enum PrivilegedTunHelperLoopEvent {
+    Command(Option<PrivilegedTunHelperEnvelope>),
+    RunnerFinished(std::result::Result<Result<()>, tokio::task::JoinError>),
+}
+
+async fn run_privileged_helper_command_loop(control: TcpStream) -> Result<()> {
+    let (read_half, mut writer) = control.into_split();
+    let mut reader = BufReader::new(read_half);
+    let mut active: Option<PrivilegedTunRunner> = None;
+
+    loop {
+        let event = read_privileged_helper_loop_event(&mut reader, active.as_mut()).await?;
+        match event {
+            PrivilegedTunHelperLoopEvent::Command(Some(command)) => {
+                let shutdown = handle_privileged_helper_command(command, &mut active, &mut writer)
+                    .await
+                    .context("failed to handle privileged TUN helper command")?;
+                if shutdown {
+                    return Ok(());
                 }
+            }
+            PrivilegedTunHelperLoopEvent::Command(None) => {
+                stop_privileged_tun_runner(&mut active)
+                    .await
+                    .context("failed to stop privileged TUN after control connection closed")?;
+                return Ok(());
+            }
+            PrivilegedTunHelperLoopEvent::RunnerFinished(result) => {
+                active = None;
+                let error = privileged_tun_runner_result_error(result);
+                write_privileged_helper_output(
+                    &mut writer,
+                    &PrivilegedTunHelperOutput::Event {
+                        event: PrivilegedTunHelperEvent::TunStopped,
+                        error,
+                    },
+                )
+                .await?;
             }
         }
     }
 }
 
-async fn monitor_parent_control(mut control: TcpStream, shutdown: CancellationToken) -> Result<()> {
-    let mut buffer = [0u8; 1];
-    loop {
-        if control
-            .read(&mut buffer)
+async fn read_privileged_helper_loop_event(
+    reader: &mut BufReader<OwnedReadHalf>,
+    active: Option<&mut PrivilegedTunRunner>,
+) -> Result<PrivilegedTunHelperLoopEvent> {
+    if let Some(active) = active {
+        tokio::select! {
+            command = read_privileged_helper_command(reader) => {
+                command.map(PrivilegedTunHelperLoopEvent::Command)
+            }
+            result = &mut active.task => {
+                Ok(PrivilegedTunHelperLoopEvent::RunnerFinished(result))
+            }
+        }
+    } else {
+        read_privileged_helper_command(reader)
             .await
-            .context("failed to read TUN helper control connection")?
-            == 0
-        {
-            shutdown.cancel();
-            return Ok(());
+            .map(PrivilegedTunHelperLoopEvent::Command)
+    }
+}
+
+async fn read_privileged_helper_command(
+    reader: &mut BufReader<OwnedReadHalf>,
+) -> Result<Option<PrivilegedTunHelperEnvelope>> {
+    let mut line = String::new();
+    let bytes = reader
+        .read_line(&mut line)
+        .await
+        .context("failed to read privileged TUN helper command")?;
+    if bytes == 0 {
+        return Ok(None);
+    }
+    let command = serde_json::from_str(line.trim_end())
+        .context("failed to parse privileged TUN helper command")?;
+    Ok(Some(command))
+}
+
+async fn handle_privileged_helper_command(
+    envelope: PrivilegedTunHelperEnvelope,
+    active: &mut Option<PrivilegedTunRunner>,
+    writer: &mut OwnedWriteHalf,
+) -> Result<bool> {
+    let result = match envelope.command {
+        PrivilegedTunHelperCommandKind::Start {
+            mtu,
+            tun2proxy_args,
+        } => start_privileged_tun_runner(active, tun2proxy_args, mtu).await,
+        PrivilegedTunHelperCommandKind::Stop => stop_privileged_tun_runner(active).await,
+        PrivilegedTunHelperCommandKind::Shutdown => {
+            let result = stop_privileged_tun_runner(active).await;
+            write_privileged_helper_response(writer, envelope.id, result).await?;
+            return Ok(true);
+        }
+    };
+    write_privileged_helper_response(writer, envelope.id, result).await?;
+    Ok(false)
+}
+
+async fn start_privileged_tun_runner(
+    active: &mut Option<PrivilegedTunRunner>,
+    tun2proxy_args: Vec<String>,
+    mtu: u16,
+) -> Result<()> {
+    if active.is_some() {
+        bail!("privileged TUN helper already has an active TUN runner");
+    }
+
+    let args = parse_tun2proxy_args(tun2proxy_args)?;
+    let shutdown = CancellationToken::new();
+    let mut task = tokio::spawn(run_tun2proxy(args, mtu, shutdown.clone()));
+    match timeout(Duration::from_millis(100), &mut task).await {
+        Ok(result) => match result {
+            Ok(Ok(())) => bail!("privileged TUN runner exited during startup"),
+            Ok(Err(err)) => Err(err).context("privileged TUN runner failed during startup"),
+            Err(err) => Err(err).context("privileged TUN runner task panicked during startup"),
+        },
+        Err(_) => {
+            *active = Some(PrivilegedTunRunner { shutdown, task });
+            Ok(())
         }
     }
+}
+
+async fn stop_privileged_tun_runner(active: &mut Option<PrivilegedTunRunner>) -> Result<()> {
+    let Some(mut runner) = active.take() else {
+        return Ok(());
+    };
+
+    runner.shutdown.cancel();
+    match timeout(Duration::from_secs(5), &mut runner.task).await {
+        Ok(result) => match result {
+            Ok(result) => result,
+            Err(err) => Err(err).context("privileged TUN runner task panicked during shutdown"),
+        },
+        Err(_) => {
+            runner.task.abort();
+            bail!("timed out waiting for privileged TUN runner shutdown");
+        }
+    }
+}
+
+fn privileged_tun_runner_result_error(
+    result: std::result::Result<Result<()>, tokio::task::JoinError>,
+) -> Option<String> {
+    match result {
+        Ok(Ok(())) => None,
+        Ok(Err(err)) => Some(format!("{err:#}")),
+        Err(err) => Some(format!("privileged TUN runner task panicked: {err}")),
+    }
+}
+
+async fn write_privileged_helper_response(
+    writer: &mut OwnedWriteHalf,
+    id: u64,
+    result: Result<()>,
+) -> Result<()> {
+    let output = match result {
+        Ok(()) => PrivilegedTunHelperOutput::Response {
+            id,
+            ok: true,
+            error: None,
+        },
+        Err(err) => PrivilegedTunHelperOutput::Response {
+            id,
+            ok: false,
+            error: Some(format!("{err:#}")),
+        },
+    };
+    write_privileged_helper_output(writer, &output).await
+}
+
+async fn write_privileged_helper_output(
+    writer: &mut OwnedWriteHalf,
+    output: &PrivilegedTunHelperOutput,
+) -> Result<()> {
+    let mut line =
+        serde_json::to_vec(output).context("failed to encode privileged helper output")?;
+    line.push(b'\n');
+    writer
+        .write_all(&line)
+        .await
+        .context("failed to write privileged helper output")
 }
 
 #[cfg(target_os = "macos")]
@@ -394,8 +580,478 @@ const MACOS_HELPER_AUTH_TIMEOUT: Duration = Duration::from_secs(120);
 #[cfg(target_os = "windows")]
 const WINDOWS_HELPER_AUTH_TIMEOUT: Duration = Duration::from_secs(120);
 
+pub async fn shutdown_privileged_helper_session() {
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        let mut cached = privileged_tun_helper_session_cache().lock().await;
+        let Some(session) = cached.take() else {
+            return;
+        };
+        match session.shutdown().await {
+            Ok(()) => info!("privileged TUN helper session stopped"),
+            Err(err) => warn!(error = %err, "failed to stop privileged TUN helper session"),
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn privileged_tun_helper_session_cache()
+-> &'static tokio::sync::Mutex<Option<Arc<PrivilegedTunHelperSession>>> {
+    static CACHE: OnceLock<tokio::sync::Mutex<Option<Arc<PrivilegedTunHelperSession>>>> =
+        OnceLock::new();
+    CACHE.get_or_init(|| tokio::sync::Mutex::new(None))
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+struct PrivilegedTunHelperSession {
+    platform: &'static str,
+    requests: mpsc::UnboundedSender<PrivilegedTunHelperRequest>,
+    run_exit: watch::Sender<Option<PrivilegedTunRunExit>>,
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[derive(Debug, Clone)]
+struct PrivilegedTunRunExit {
+    error: Option<String>,
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+enum PrivilegedTunHelperRequest {
+    Start {
+        argv: Vec<String>,
+        mtu: u16,
+        response: oneshot::Sender<Result<()>>,
+    },
+    Stop {
+        response: Option<oneshot::Sender<Result<()>>>,
+    },
+    Shutdown {
+        response: Option<oneshot::Sender<Result<()>>>,
+    },
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+struct PrivilegedTunRunLease {
+    requests: mpsc::UnboundedSender<PrivilegedTunHelperRequest>,
+    exit: watch::Receiver<Option<PrivilegedTunRunExit>>,
+    stopped: bool,
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl PrivilegedTunHelperSession {
+    fn spawn(
+        platform: &'static str,
+        stream: TcpStream,
+        process_exit: oneshot::Receiver<String>,
+    ) -> Arc<Self> {
+        let (requests, request_rx) = mpsc::unbounded_channel();
+        let (run_exit, _) = watch::channel(None);
+        let session = Arc::new(Self {
+            platform,
+            requests,
+            run_exit,
+        });
+        tokio::spawn(run_privileged_helper_session_manager(
+            platform,
+            stream,
+            request_rx,
+            session.run_exit.clone(),
+            process_exit,
+        ));
+        session
+    }
+
+    fn is_alive(&self) -> bool {
+        !self.requests.is_closed()
+    }
+
+    async fn start_run(&self, argv: Vec<String>, mtu: u16) -> Result<PrivilegedTunRunLease> {
+        let mut exit = self.run_exit.subscribe();
+        let (response, response_rx) = oneshot::channel();
+        self.requests
+            .send(PrivilegedTunHelperRequest::Start {
+                argv,
+                mtu,
+                response,
+            })
+            .with_context(|| {
+                format!(
+                    "{} privileged TUN helper session is not running",
+                    self.platform
+                )
+            })?;
+        response_rx.await.with_context(|| {
+            format!(
+                "{} privileged TUN helper session stopped before TUN start completed",
+                self.platform
+            )
+        })??;
+        if let Some(exit) = exit.borrow_and_update().clone() {
+            exit.into_result()?;
+            bail!("privileged TUN helper runner stopped before TUN start completed");
+        }
+        Ok(PrivilegedTunRunLease {
+            requests: self.requests.clone(),
+            exit,
+            stopped: false,
+        })
+    }
+
+    async fn shutdown(&self) -> Result<()> {
+        let (response, response_rx) = oneshot::channel();
+        self.requests
+            .send(PrivilegedTunHelperRequest::Shutdown {
+                response: Some(response),
+            })
+            .with_context(|| {
+                format!(
+                    "{} privileged TUN helper session is not running",
+                    self.platform
+                )
+            })?;
+        response_rx.await.with_context(|| {
+            format!(
+                "{} privileged TUN helper session stopped before shutdown completed",
+                self.platform
+            )
+        })?
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl PrivilegedTunRunExit {
+    fn into_result(self) -> Result<()> {
+        match self.error {
+            Some(error) => bail!("privileged TUN helper runner stopped: {error}"),
+            None => Ok(()),
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl PrivilegedTunRunLease {
+    async fn wait(mut self, shutdown: CancellationToken) -> Result<()> {
+        if let Some(exit) = self.exit.borrow_and_update().clone() {
+            self.stopped = true;
+            return exit.into_result();
+        }
+
+        tokio::select! {
+            _ = shutdown.cancelled() => self.stop().await,
+            changed = self.exit.changed() => {
+                changed.context("privileged TUN helper session stopped before reporting runner status")?;
+                let Some(exit) = self.exit.borrow_and_update().clone() else {
+                    bail!("privileged TUN helper reported an empty runner status");
+                };
+                self.stopped = true;
+                exit.into_result()
+            }
+        }
+    }
+
+    async fn stop(&mut self) -> Result<()> {
+        if self.stopped {
+            return Ok(());
+        }
+        let (response, response_rx) = oneshot::channel();
+        self.requests
+            .send(PrivilegedTunHelperRequest::Stop {
+                response: Some(response),
+            })
+            .context("privileged TUN helper session is not running")?;
+        let result = response_rx
+            .await
+            .context("privileged TUN helper session stopped before TUN stop completed")?;
+        self.stopped = true;
+        result
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl Drop for PrivilegedTunRunLease {
+    fn drop(&mut self) {
+        if self.stopped {
+            return;
+        }
+        let _ = self
+            .requests
+            .send(PrivilegedTunHelperRequest::Stop { response: None });
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+async fn run_session_scoped_privileged_helper(
+    platform: &'static str,
+    session: Arc<PrivilegedTunHelperSession>,
+    argv: Vec<String>,
+    mtu: u16,
+    shutdown: CancellationToken,
+) -> Result<()> {
+    info!(platform, "starting TUN through privileged helper session");
+    let lease = session.start_run(argv, mtu).await?;
+    lease.wait(shutdown).await
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+async fn ensure_privileged_tun_helper_session<F, Fut>(
+    platform: &'static str,
+    start: F,
+) -> Result<Arc<PrivilegedTunHelperSession>>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<Arc<PrivilegedTunHelperSession>>>,
+{
+    let mut cached = privileged_tun_helper_session_cache().lock().await;
+    if let Some(session) = cached.as_ref() {
+        if session.is_alive() {
+            debug!(platform, "reusing privileged TUN helper session");
+            return Ok(Arc::clone(session));
+        }
+        warn!(platform, "discarding stopped privileged TUN helper session");
+        *cached = None;
+    }
+
+    let session = start().await?;
+    *cached = Some(Arc::clone(&session));
+    Ok(session)
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+async fn run_privileged_helper_session_manager(
+    platform: &'static str,
+    stream: TcpStream,
+    mut requests: mpsc::UnboundedReceiver<PrivilegedTunHelperRequest>,
+    run_exit: watch::Sender<Option<PrivilegedTunRunExit>>,
+    mut process_exit: oneshot::Receiver<String>,
+) {
+    let (read_half, mut writer) = stream.into_split();
+    let mut reader = BufReader::new(read_half);
+    let mut pending: BTreeMap<u64, oneshot::Sender<Result<()>>> = BTreeMap::new();
+    let mut next_id = 1u64;
+    let mut shutdown_after_response = None;
+
+    loop {
+        tokio::select! {
+            request = requests.recv() => {
+                let Some(request) = request else {
+                    let _ = send_privileged_helper_command(
+                        &mut writer,
+                        next_id,
+                        PrivilegedTunHelperCommandKind::Shutdown,
+                    ).await;
+                    break;
+                };
+                let id = next_id;
+                next_id = next_id.saturating_add(1);
+                if let Err(err) = handle_privileged_helper_manager_request(
+                    platform,
+                    request,
+                    id,
+                    &mut writer,
+                    &mut pending,
+                    &run_exit,
+                    &mut shutdown_after_response,
+                ).await {
+                    warn!(platform, error = %err, "privileged TUN helper command failed");
+                    fail_pending_privileged_helper_requests(&mut pending, format!("{err:#}"));
+                    let _ = run_exit.send(Some(PrivilegedTunRunExit { error: Some(format!("{err:#}")) }));
+                    break;
+                }
+            }
+            output = read_privileged_helper_output(&mut reader) => {
+                match output {
+                    Ok(Some(output)) => {
+                        let should_shutdown = handle_privileged_helper_manager_output(
+                            output,
+                            &mut pending,
+                            &run_exit,
+                            shutdown_after_response,
+                        );
+                        if should_shutdown {
+                            break;
+                        }
+                    }
+                    Ok(None) => {
+                        let message = format!("{platform} privileged TUN helper control connection closed");
+                        warn!(message = %message, "privileged TUN helper control connection closed");
+                        fail_pending_privileged_helper_requests(&mut pending, message.clone());
+                        let _ = run_exit.send(Some(PrivilegedTunRunExit { error: Some(message) }));
+                        break;
+                    }
+                    Err(err) => {
+                        let message = format!("failed to read {platform} privileged TUN helper output: {err:#}");
+                        warn!(error = %err, platform, "privileged TUN helper output read failed");
+                        fail_pending_privileged_helper_requests(&mut pending, message.clone());
+                        let _ = run_exit.send(Some(PrivilegedTunRunExit { error: Some(message) }));
+                        break;
+                    }
+                }
+            }
+            process = &mut process_exit => {
+                let message = process.unwrap_or_else(|_| {
+                    format!("{platform} privileged TUN helper process monitor stopped")
+                });
+                warn!(platform, message = %message, "privileged TUN helper process exited");
+                fail_pending_privileged_helper_requests(&mut pending, message.clone());
+                let _ = run_exit.send(Some(PrivilegedTunRunExit { error: Some(message) }));
+                break;
+            }
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+async fn handle_privileged_helper_manager_request(
+    platform: &'static str,
+    request: PrivilegedTunHelperRequest,
+    id: u64,
+    writer: &mut OwnedWriteHalf,
+    pending: &mut BTreeMap<u64, oneshot::Sender<Result<()>>>,
+    run_exit: &watch::Sender<Option<PrivilegedTunRunExit>>,
+    shutdown_after_response: &mut Option<u64>,
+) -> Result<()> {
+    match request {
+        PrivilegedTunHelperRequest::Start {
+            argv,
+            mtu,
+            response,
+        } => {
+            let _ = run_exit.send(None);
+            send_privileged_helper_command(
+                writer,
+                id,
+                PrivilegedTunHelperCommandKind::Start {
+                    mtu,
+                    tun2proxy_args: argv,
+                },
+            )
+            .await?;
+            pending.insert(id, response);
+            debug!(
+                platform,
+                request_id = id,
+                "sent privileged TUN start command"
+            );
+        }
+        PrivilegedTunHelperRequest::Stop { response } => {
+            send_privileged_helper_command(writer, id, PrivilegedTunHelperCommandKind::Stop)
+                .await?;
+            if let Some(response) = response {
+                pending.insert(id, response);
+            }
+            debug!(
+                platform,
+                request_id = id,
+                "sent privileged TUN stop command"
+            );
+        }
+        PrivilegedTunHelperRequest::Shutdown { response } => {
+            send_privileged_helper_command(writer, id, PrivilegedTunHelperCommandKind::Shutdown)
+                .await?;
+            if let Some(response) = response {
+                pending.insert(id, response);
+                *shutdown_after_response = Some(id);
+            } else {
+                *shutdown_after_response = Some(id);
+            }
+            debug!(
+                platform,
+                request_id = id,
+                "sent privileged TUN helper shutdown command"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn handle_privileged_helper_manager_output(
+    output: PrivilegedTunHelperOutput,
+    pending: &mut BTreeMap<u64, oneshot::Sender<Result<()>>>,
+    run_exit: &watch::Sender<Option<PrivilegedTunRunExit>>,
+    shutdown_after_response: Option<u64>,
+) -> bool {
+    match output {
+        PrivilegedTunHelperOutput::Response { id, ok, error } => {
+            if let Some(response) = pending.remove(&id) {
+                let result = if ok {
+                    Ok(())
+                } else {
+                    Err(anyhow::anyhow!(
+                        "{}",
+                        error.unwrap_or_else(|| "privileged TUN helper command failed".to_string())
+                    ))
+                };
+                let _ = response.send(result);
+            }
+            shutdown_after_response == Some(id)
+        }
+        PrivilegedTunHelperOutput::Event { event, error } => {
+            if matches!(event, PrivilegedTunHelperEvent::TunStopped) {
+                let _ = run_exit.send(Some(PrivilegedTunRunExit { error }));
+            }
+            false
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+async fn send_privileged_helper_command(
+    writer: &mut OwnedWriteHalf,
+    id: u64,
+    command: PrivilegedTunHelperCommandKind,
+) -> Result<()> {
+    let envelope = PrivilegedTunHelperEnvelope { id, command };
+    let mut line =
+        serde_json::to_vec(&envelope).context("failed to encode privileged helper command")?;
+    line.push(b'\n');
+    writer
+        .write_all(&line)
+        .await
+        .context("failed to write privileged helper command")
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+async fn read_privileged_helper_output(
+    reader: &mut BufReader<OwnedReadHalf>,
+) -> Result<Option<PrivilegedTunHelperOutput>> {
+    let mut line = String::new();
+    let bytes = reader
+        .read_line(&mut line)
+        .await
+        .context("failed to read privileged helper output")?;
+    if bytes == 0 {
+        return Ok(None);
+    }
+    serde_json::from_str(line.trim_end())
+        .map(Some)
+        .context("failed to parse privileged helper output")
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn fail_pending_privileged_helper_requests(
+    pending: &mut BTreeMap<u64, oneshot::Sender<Result<()>>>,
+    message: String,
+) {
+    for (_, response) in std::mem::take(pending) {
+        let _ = response.send(Err(anyhow::anyhow!("{}", message)));
+    }
+}
+
 #[cfg(target_os = "macos")]
-async fn run_macos_privileged_helper(argv: Vec<String>, mtu: u16) -> Result<()> {
+async fn run_macos_privileged_helper(
+    argv: Vec<String>,
+    mtu: u16,
+    shutdown: CancellationToken,
+) -> Result<()> {
+    let session =
+        ensure_privileged_tun_helper_session("macOS", start_macos_privileged_helper_session)
+            .await?;
+    run_session_scoped_privileged_helper("macOS", session, argv, mtu, shutdown).await
+}
+
+#[cfg(target_os = "macos")]
+async fn start_macos_privileged_helper_session() -> Result<Arc<PrivilegedTunHelperSession>> {
     let mut token_file = HelperTokenFile::create()?;
     let listener = TcpListener::bind(("127.0.0.1", 0))
         .await
@@ -403,7 +1059,7 @@ async fn run_macos_privileged_helper(argv: Vec<String>, mtu: u16) -> Result<()> 
     let control_addr = listener
         .local_addr()
         .context("failed to read TUN helper control address")?;
-    let script = macos_privileged_helper_script(&argv, mtu, control_addr, token_file.path())?;
+    let script = macos_privileged_helper_script(control_addr, token_file.path())?;
     let mut child = Command::new("/usr/bin/osascript")
         .arg("-e")
         .arg(script)
@@ -428,28 +1084,36 @@ async fn run_macos_privileged_helper(argv: Vec<String>, mtu: u16) -> Result<()> 
     drop(child_wait);
     verify_helper_token(&mut stream, token_file.token()).await?;
     token_file.remove_best_effort();
-    debug!("macOS privileged TUN helper connected");
-
-    let mut child_wait = Box::pin(child.wait());
-    let mut helper_monitor = Box::pin(monitor_privileged_helper(stream, "macOS"));
-    tokio::select! {
-        result = &mut helper_monitor => {
-            let _ = timeout(Duration::from_secs(1), &mut child_wait).await;
-            result
-        }
-        result = &mut child_wait => {
-            let status = result.context("failed to wait for macOS privileged TUN helper")?;
-            if status.success() {
-                Ok(())
-            } else {
-                bail!("macOS privileged TUN helper exited with {status}");
-            }
-        }
-    }
+    info!("macOS privileged TUN helper session connected");
+    let (process_exit_tx, process_exit_rx) = oneshot::channel();
+    tokio::spawn(async move {
+        let message = match child.wait().await {
+            Ok(status) => format!("macOS privileged TUN helper exited with {status}"),
+            Err(err) => format!("failed to wait for macOS privileged TUN helper: {err}"),
+        };
+        let _ = process_exit_tx.send(message);
+    });
+    Ok(PrivilegedTunHelperSession::spawn(
+        "macOS",
+        stream,
+        process_exit_rx,
+    ))
 }
 
 #[cfg(target_os = "windows")]
-async fn run_windows_privileged_helper(argv: Vec<String>, mtu: u16) -> Result<()> {
+async fn run_windows_privileged_helper(
+    argv: Vec<String>,
+    mtu: u16,
+    shutdown: CancellationToken,
+) -> Result<()> {
+    let session =
+        ensure_privileged_tun_helper_session("Windows", start_windows_privileged_helper_session)
+            .await?;
+    run_session_scoped_privileged_helper("Windows", session, argv, mtu, shutdown).await
+}
+
+#[cfg(target_os = "windows")]
+async fn start_windows_privileged_helper_session() -> Result<Arc<PrivilegedTunHelperSession>> {
     let mut token_file = HelperTokenFile::create()?;
     let listener = TcpListener::bind(("127.0.0.1", 0))
         .await
@@ -457,7 +1121,7 @@ async fn run_windows_privileged_helper(argv: Vec<String>, mtu: u16) -> Result<()
     let control_addr = listener
         .local_addr()
         .context("failed to read TUN helper control address")?;
-    let helper = windows_spawn_privileged_helper(&argv, mtu, control_addr, token_file.path())?;
+    let helper = windows_spawn_privileged_helper(control_addr, token_file.path())?;
 
     let accept = timeout(WINDOWS_HELPER_AUTH_TIMEOUT, listener.accept());
     tokio::pin!(accept);
@@ -476,37 +1140,24 @@ async fn run_windows_privileged_helper(argv: Vec<String>, mtu: u16) -> Result<()
     drop(helper_wait);
     verify_helper_token(&mut stream, token_file.token()).await?;
     token_file.remove_best_effort();
-    debug!("Windows privileged TUN helper connected");
-
-    let mut helper_wait = Box::pin(windows_wait_process_exit(helper.handle()));
-    let mut helper_monitor = Box::pin(monitor_privileged_helper(stream, "Windows"));
-    tokio::select! {
-        result = &mut helper_monitor => {
-            let _ = timeout(Duration::from_secs(1), &mut helper_wait).await;
-            result
+    info!("Windows privileged TUN helper session connected");
+    let handle = helper.into_handle();
+    let (process_exit_tx, process_exit_rx) = oneshot::channel();
+    tokio::spawn(async move {
+        let message = match windows_wait_process_exit(handle).await {
+            Ok(exit_code) => format!("Windows privileged TUN helper exited with code {exit_code}"),
+            Err(err) => format!("failed to wait for Windows privileged TUN helper: {err}"),
+        };
+        unsafe {
+            let _ = close_handle(handle);
         }
-        result = &mut helper_wait => {
-            let exit_code = result.context("failed to wait for Windows privileged TUN helper")?;
-            if exit_code == 0 {
-                Ok(())
-            } else {
-                bail!("Windows privileged TUN helper exited with code {exit_code}");
-            }
-        }
-    }
-}
-
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-async fn monitor_privileged_helper(mut stream: TcpStream, platform: &str) -> Result<()> {
-    let mut buffer = [0u8; 1];
-    loop {
-        if stream.read(&mut buffer).await.with_context(|| {
-            format!("failed to read {platform} privileged TUN helper control connection")
-        })? == 0
-        {
-            bail!("{platform} privileged TUN helper stopped");
-        }
-    }
+        let _ = process_exit_tx.send(message);
+    });
+    Ok(PrivilegedTunHelperSession::spawn(
+        "Windows",
+        stream,
+        process_exit_rx,
+    ))
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -597,20 +1248,13 @@ fn helper_token_path() -> PathBuf {
 
 #[cfg(target_os = "windows")]
 fn windows_spawn_privileged_helper(
-    argv: &[String],
-    mtu: u16,
     control_addr: SocketAddr,
     token_file: &Path,
 ) -> Result<WindowsHelperProcess> {
     let exe = std::env::current_exe().context("failed to locate current executable")?;
     let exe = wide_null(&exe.display().to_string());
     let verb = wide_null("runas");
-    let parameters = wide_null(&windows_helper_parameters(
-        argv,
-        mtu,
-        control_addr,
-        token_file,
-    ));
+    let parameters = wide_null(&windows_helper_parameters(control_addr, token_file));
     let directory = std::env::current_exe().ok().and_then(|path| {
         path.parent()
             .map(|parent| wide_null(&parent.display().to_string()))
@@ -660,23 +1304,14 @@ fn windows_spawn_privileged_helper(
 }
 
 #[cfg(any(target_os = "windows", test))]
-fn windows_helper_parameters(
-    argv: &[String],
-    mtu: u16,
-    control_addr: SocketAddr,
-    token_file: &Path,
-) -> String {
-    let mut command = vec![
+fn windows_helper_parameters(control_addr: SocketAddr, token_file: &Path) -> String {
+    let command = vec![
         "internal-tun-helper".to_string(),
         "--control".to_string(),
         control_addr.to_string(),
         "--token-file".to_string(),
         token_file.display().to_string(),
-        "--mtu".to_string(),
-        mtu.to_string(),
-        "--".to_string(),
     ];
-    command.extend(argv.iter().cloned());
     windows_command_line(&command)
 }
 
@@ -765,6 +1400,12 @@ impl WindowsHelperProcess {
     fn handle(&self) -> WindowsHandle {
         self.handle
     }
+
+    fn into_handle(mut self) -> WindowsHandle {
+        let handle = self.handle;
+        self.handle = 0;
+        handle
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -780,25 +1421,16 @@ impl Drop for WindowsHelperProcess {
 }
 
 #[cfg(target_os = "macos")]
-fn macos_privileged_helper_script(
-    argv: &[String],
-    mtu: u16,
-    control_addr: SocketAddr,
-    token_file: &Path,
-) -> Result<String> {
+fn macos_privileged_helper_script(control_addr: SocketAddr, token_file: &Path) -> Result<String> {
     let exe = std::env::current_exe().context("failed to locate current executable")?;
-    let mut command = vec![
+    let command = vec![
         exe.display().to_string(),
         "internal-tun-helper".to_string(),
         "--control".to_string(),
         control_addr.to_string(),
         "--token-file".to_string(),
         token_file.display().to_string(),
-        "--mtu".to_string(),
-        mtu.to_string(),
-        "--".to_string(),
     ];
-    command.extend(argv.iter().cloned());
     Ok(format!(
         "do shell script {} with administrator privileges",
         applescript_string(&format!("exec {}", shell_join(&command)))
@@ -1223,18 +1855,8 @@ mod tests {
     }
 
     #[test]
-    fn windows_helper_parameters_quote_tun_arguments() {
+    fn windows_helper_parameters_only_start_session() {
         let params = windows_helper_parameters(
-            &[
-                "tun2proxy".to_string(),
-                "--proxy".to_string(),
-                "socks5://127.0.0.1:1080".to_string(),
-                "--bypass".to_string(),
-                "C:\\Program Files\\Proxy Rules".to_string(),
-                "--tun".to_string(),
-                "Tabby \"Mew\"".to_string(),
-            ],
-            1500,
             "127.0.0.1:12345".parse().unwrap(),
             Path::new("C:\\Temp\\helper-auth.txt"),
         );
@@ -1242,14 +1864,13 @@ mod tests {
         assert!(params.starts_with("internal-tun-helper --control 127.0.0.1:12345"));
         assert!(params.contains("--token-file C:\\Temp\\helper-auth.txt"));
         assert!(!params.contains("--token "));
-        assert!(params.contains("--mtu 1500 -- tun2proxy"));
-        assert!(params.contains("\"C:\\Program Files\\Proxy Rules\""));
-        assert!(params.contains("\"Tabby \\\"Mew\\\"\""));
+        assert!(!params.contains("--mtu"));
+        assert!(!params.contains("tun2proxy"));
     }
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn macos_privileged_helper_script_quotes_shell_and_applescript() {
+    fn macos_privileged_helper_script_only_starts_session() {
         assert_eq!(
             shell_quote("quote'and\"slash\\"),
             "'quote'\\''and\"slash\\'"
@@ -1257,14 +1878,6 @@ mod tests {
         assert_eq!(applescript_string("a\"b\\c"), "\"a\\\"b\\\\c\"");
 
         let script = macos_privileged_helper_script(
-            &[
-                "tun2proxy".to_string(),
-                "--proxy".to_string(),
-                "socks5://127.0.0.1:1080".to_string(),
-                "--bypass".to_string(),
-                "quote'and\"slash\\".to_string(),
-            ],
-            1500,
             "127.0.0.1:12345".parse().unwrap(),
             Path::new("/tmp/helper-auth.txt"),
         )
@@ -1273,9 +1886,118 @@ mod tests {
         assert!(script.contains("with administrator privileges"));
         assert!(script.contains("--token-file"));
         assert!(!script.contains("--token "));
-        assert!(script.contains("quote"));
-        assert!(script.contains("slash"));
+        assert!(!script.contains("--mtu"));
+        assert!(!script.contains("tun2proxy"));
         assert!(script.contains("internal-tun-helper"));
+    }
+
+    #[test]
+    fn privileged_helper_start_command_carries_tun_arguments() {
+        let envelope = PrivilegedTunHelperEnvelope {
+            id: 7,
+            command: PrivilegedTunHelperCommandKind::Start {
+                mtu: 1500,
+                tun2proxy_args: vec![
+                    "tun2proxy".to_string(),
+                    "--proxy".to_string(),
+                    "socks5://127.0.0.1:1080".to_string(),
+                    "--bypass".to_string(),
+                    "quote'and\"slash\\".to_string(),
+                ],
+            },
+        };
+
+        let json = serde_json::to_string(&envelope).unwrap();
+        assert!(json.contains("\"command\":\"start\""));
+        assert!(json.contains("\"mtu\":1500"));
+        assert!(json.contains("tun2proxy"));
+
+        let decoded: PrivilegedTunHelperEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.id, 7);
+        match decoded.command {
+            PrivilegedTunHelperCommandKind::Start {
+                mtu,
+                tun2proxy_args,
+            } => {
+                assert_eq!(mtu, 1500);
+                assert_eq!(tun2proxy_args[0], "tun2proxy");
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[tokio::test]
+    async fn privileged_helper_session_drop_sends_stop_without_reauth() -> Result<()> {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+        let addr = listener.local_addr()?;
+        let client = TcpStream::connect(addr).await?;
+        let (server, _) = listener.accept().await?;
+        let (_process_exit_tx, process_exit_rx) = oneshot::channel();
+        let session = PrivilegedTunHelperSession::spawn("test", client, process_exit_rx);
+
+        let fake_helper = tokio::spawn(async move {
+            let (read_half, mut writer) = server.into_split();
+            let mut reader = BufReader::new(read_half);
+            let start = read_test_helper_command(&mut reader).await?;
+            assert_eq!(start.id, 1);
+            match start.command {
+                PrivilegedTunHelperCommandKind::Start {
+                    mtu,
+                    tun2proxy_args,
+                } => {
+                    assert_eq!(mtu, 1500);
+                    assert_eq!(tun2proxy_args[0], "tun2proxy");
+                }
+                other => panic!("unexpected command: {other:?}"),
+            }
+            write_privileged_helper_output(
+                &mut writer,
+                &PrivilegedTunHelperOutput::Response {
+                    id: start.id,
+                    ok: true,
+                    error: None,
+                },
+            )
+            .await?;
+
+            let stop = read_test_helper_command(&mut reader).await?;
+            assert_eq!(stop.id, 2);
+            assert!(matches!(stop.command, PrivilegedTunHelperCommandKind::Stop));
+            write_privileged_helper_output(
+                &mut writer,
+                &PrivilegedTunHelperOutput::Response {
+                    id: stop.id,
+                    ok: true,
+                    error: None,
+                },
+            )
+            .await?;
+            Ok::<(), anyhow::Error>(())
+        });
+
+        let lease = session
+            .start_run(
+                vec![
+                    "tun2proxy".to_string(),
+                    "--proxy".to_string(),
+                    "socks5://127.0.0.1:1080".to_string(),
+                ],
+                1500,
+            )
+            .await?;
+        drop(lease);
+        fake_helper.await??;
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    async fn read_test_helper_command(
+        reader: &mut BufReader<OwnedReadHalf>,
+    ) -> Result<PrivilegedTunHelperEnvelope> {
+        let mut line = String::new();
+        reader.read_line(&mut line).await?;
+        serde_json::from_str(line.trim_end()).context("test helper command must be JSON")
     }
 
     #[test]

@@ -153,17 +153,10 @@ fn parses_hidden_internal_tun_helper_command() -> Result<()> {
         "127.0.0.1:12345",
         "--token-file",
         "/tmp/tabbymew-helper-auth.txt",
-        "--mtu",
-        "1500",
-        "--",
-        "tun2proxy",
-        "--proxy",
-        "socks5://127.0.0.1:1080",
     ])?;
 
     match cli.command {
         Some(Command::InternalTunHelper(command)) => {
-            assert_eq!(command.mtu, 1500);
             assert_eq!(
                 command.token_file,
                 PathBuf::from("/tmp/tabbymew-helper-auth.txt")

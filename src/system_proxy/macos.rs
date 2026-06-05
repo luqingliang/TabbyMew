@@ -43,12 +43,13 @@ pub(super) fn macos_switch(
     switch: SystemProxySwitch,
 ) -> Result<SystemProxyStatus> {
     macos_switch_with_runner(target, switch, &run_command, &|target, switch| {
-        if let Err(err) = macos_apply_system_configuration(target, switch) {
-            macos_apply_system_configuration_authorized(target, switch).with_context(|| {
-                format!("failed to write macOS network preferences without authorization: {err}")
-            })?;
-        }
-        Ok(())
+        macos_apply_system_configuration_with_session_authorization(
+            target,
+            switch,
+            macos_authorization_is_cached(),
+            &macos_apply_system_configuration,
+            &macos_apply_system_configuration_authorized,
+        )
     })
 }
 
@@ -57,15 +58,13 @@ pub(super) fn macos_disable_managed_without_prompt(
     target: Option<&SystemProxyTarget>,
 ) -> Result<SystemProxyStatus> {
     macos_disable_managed_without_prompt_with_runner(target, &run_command, &|target, switch| {
-        if let Err(err) = macos_apply_system_configuration(target, switch) {
-            macos_apply_system_configuration_authorized_without_prompt(target, switch)
-                .with_context(|| {
-                    format!(
-                        "failed to write macOS network preferences without prompting after unauthenticated attempt failed: {err}"
-                    )
-                })?;
-        }
-        Ok(())
+        macos_apply_system_configuration_with_session_authorization(
+            target,
+            switch,
+            macos_authorization_is_cached(),
+            &macos_apply_system_configuration,
+            &macos_apply_system_configuration_authorized_without_prompt,
+        )
     })
 }
 
@@ -103,6 +102,44 @@ pub(super) fn macos_switch_with_runner(
 
     apply(target, switch)?;
     Ok(macos_status_with_runner(target, run))
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(super) fn macos_apply_system_configuration_with_session_authorization(
+    target: Option<&SystemProxyTarget>,
+    switch: SystemProxySwitch,
+    has_cached_authorization: bool,
+    apply_without_authorization: &SystemProxyApplier<'_>,
+    apply_with_authorization: &SystemProxyApplier<'_>,
+) -> Result<()> {
+    if has_cached_authorization {
+        tracing::debug!(
+            action = ?switch,
+            "macOS system proxy authorization cache hit; reusing session authorization"
+        );
+        return apply_with_authorization(target, switch)
+            .context("failed to write macOS network preferences with cached authorization");
+    }
+
+    match apply_without_authorization(target, switch) {
+        Ok(()) => {
+            tracing::debug!(
+                action = ?switch,
+                "macOS system proxy preferences updated without authorization"
+            );
+            Ok(())
+        }
+        Err(err) => {
+            tracing::debug!(
+                action = ?switch,
+                error = %err,
+                "macOS system proxy authorization cache miss; requesting session authorization"
+            );
+            apply_with_authorization(target, switch).with_context(|| {
+                format!("failed to write macOS network preferences without authorization: {err}")
+            })
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -203,6 +240,14 @@ pub(super) fn macos_apply_system_configuration_with_cached_authorization(
 pub(super) fn macos_authorization_cache() -> &'static Mutex<Option<MacAuthorization>> {
     static CACHE: OnceLock<Mutex<Option<MacAuthorization>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn macos_authorization_is_cached() -> bool {
+    macos_authorization_cache()
+        .lock()
+        .map(|cache| cache.is_some())
+        .unwrap_or(false)
 }
 
 #[cfg(target_os = "macos")]
@@ -354,21 +399,30 @@ impl MacAuthorization {
 
         const AUTHORIZATION_FLAG_INTERACTION_ALLOWED: AuthorizationFlags = 1 << 0;
         const AUTHORIZATION_FLAG_EXTEND_RIGHTS: AuthorizationFlags = 1 << 1;
-        const AUTHORIZATION_FLAG_PREAUTHORIZE: AuthorizationFlags = 1 << 4;
         const NETWORK_PREFERENCES_RIGHT: &[u8] = b"system.preferences.network\0";
+        const SYSTEM_CONFIGURATION_NETWORK_RIGHT: &[u8] =
+            b"system.services.systemconfiguration.network\0";
 
         let mut authorization = ptr::null();
-        let mut right = AuthorizationItem {
-            name: NETWORK_PREFERENCES_RIGHT.as_ptr().cast::<c_char>(),
-            value_length: 0,
-            value: ptr::null_mut::<c_void>(),
-            flags: 0,
-        };
+        let mut right_items = [
+            AuthorizationItem {
+                name: NETWORK_PREFERENCES_RIGHT.as_ptr().cast::<c_char>(),
+                value_length: 0,
+                value: ptr::null_mut::<c_void>(),
+                flags: 0,
+            },
+            AuthorizationItem {
+                name: SYSTEM_CONFIGURATION_NETWORK_RIGHT.as_ptr().cast::<c_char>(),
+                value_length: 0,
+                value: ptr::null_mut::<c_void>(),
+                flags: 0,
+            },
+        ];
         let rights = AuthorizationRights {
-            count: 1,
-            items: &mut right,
+            count: right_items.len() as u32,
+            items: right_items.as_mut_ptr(),
         };
-        let mut flags = AUTHORIZATION_FLAG_EXTEND_RIGHTS | AUTHORIZATION_FLAG_PREAUTHORIZE;
+        let mut flags = AUTHORIZATION_FLAG_EXTEND_RIGHTS;
         if matches!(interaction, MacAuthorizationInteraction::Allowed) {
             flags |= AUTHORIZATION_FLAG_INTERACTION_ALLOWED;
         }

@@ -148,6 +148,7 @@ pub async fn run(
         ),
         Err(err) => warn!(error = %err, "failed to stop proxy listeners"),
     }
+    crate::inbound::tun::shutdown_privileged_helper_session().await;
     system_proxy::clear_session_authorization();
     info!("cleared session authorization cache");
 

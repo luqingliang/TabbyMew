@@ -360,6 +360,101 @@ fn macos_disable_managed_without_prompt_skips_unmanaged_proxy() -> Result<()> {
 }
 
 #[test]
+fn macos_session_authorization_reuses_cached_authorization_first() -> Result<()> {
+    let target = hybrid_target();
+    let unauthorized_calls = Cell::new(0usize);
+    let authorized_calls = Cell::new(0usize);
+    let apply_without_authorization =
+        |_target: Option<&SystemProxyTarget>, _switch: SystemProxySwitch| {
+            unauthorized_calls.set(unauthorized_calls.get() + 1);
+            Ok(())
+        };
+    let apply_with_authorization = |applied_target: Option<&SystemProxyTarget>,
+                                    switch: SystemProxySwitch| {
+        assert_eq!(applied_target, Some(&target));
+        assert_eq!(switch, SystemProxySwitch::Enable);
+        authorized_calls.set(authorized_calls.get() + 1);
+        Ok(())
+    };
+
+    macos_apply_system_configuration_with_session_authorization(
+        Some(&target),
+        SystemProxySwitch::Enable,
+        true,
+        &apply_without_authorization,
+        &apply_with_authorization,
+    )?;
+
+    assert_eq!(unauthorized_calls.get(), 0);
+    assert_eq!(authorized_calls.get(), 1);
+    Ok(())
+}
+
+#[test]
+fn macos_session_authorization_tries_plain_write_before_prompting() -> Result<()> {
+    let target = hybrid_target();
+    let unauthorized_calls = Cell::new(0usize);
+    let authorized_calls = Cell::new(0usize);
+    let apply_without_authorization =
+        |applied_target: Option<&SystemProxyTarget>, switch: SystemProxySwitch| {
+            assert_eq!(applied_target, Some(&target));
+            assert_eq!(switch, SystemProxySwitch::Enable);
+            unauthorized_calls.set(unauthorized_calls.get() + 1);
+            Ok(())
+        };
+    let apply_with_authorization = |_target: Option<&SystemProxyTarget>,
+                                    _switch: SystemProxySwitch| {
+        authorized_calls.set(authorized_calls.get() + 1);
+        Ok(())
+    };
+
+    macos_apply_system_configuration_with_session_authorization(
+        Some(&target),
+        SystemProxySwitch::Enable,
+        false,
+        &apply_without_authorization,
+        &apply_with_authorization,
+    )?;
+
+    assert_eq!(unauthorized_calls.get(), 1);
+    assert_eq!(authorized_calls.get(), 0);
+    Ok(())
+}
+
+#[test]
+fn macos_session_authorization_prompts_after_plain_write_fails() -> Result<()> {
+    let target = hybrid_target();
+    let unauthorized_calls = Cell::new(0usize);
+    let authorized_calls = Cell::new(0usize);
+    let apply_without_authorization =
+        |applied_target: Option<&SystemProxyTarget>, switch: SystemProxySwitch| {
+            assert_eq!(applied_target, Some(&target));
+            assert_eq!(switch, SystemProxySwitch::Enable);
+            unauthorized_calls.set(unauthorized_calls.get() + 1);
+            Err(anyhow!("network preferences are locked"))
+        };
+    let apply_with_authorization = |applied_target: Option<&SystemProxyTarget>,
+                                    switch: SystemProxySwitch| {
+        assert_eq!(applied_target, Some(&target));
+        assert_eq!(switch, SystemProxySwitch::Enable);
+        authorized_calls.set(authorized_calls.get() + 1);
+        Ok(())
+    };
+
+    macos_apply_system_configuration_with_session_authorization(
+        Some(&target),
+        SystemProxySwitch::Enable,
+        false,
+        &apply_without_authorization,
+        &apply_with_authorization,
+    )?;
+
+    assert_eq!(unauthorized_calls.get(), 1);
+    assert_eq!(authorized_calls.get(), 1);
+    Ok(())
+}
+
+#[test]
 fn macos_enable_applies_over_unmanaged_proxy() -> Result<()> {
     let target = hybrid_target();
     let applied = Cell::new(false);
