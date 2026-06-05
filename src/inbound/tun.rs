@@ -19,7 +19,6 @@ use tokio::time::sleep;
 use tokio::{
     io::AsyncReadExt,
     sync::{mpsc, oneshot, watch},
-    task::JoinHandle,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -27,7 +26,7 @@ use tokio::{
         TcpListener, TcpStream,
         tcp::{OwnedReadHalf, OwnedWriteHalf},
     },
-    task::JoinSet,
+    task::{JoinHandle, JoinSet},
     time::timeout,
 };
 use tracing::debug;
