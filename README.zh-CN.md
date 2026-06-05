@@ -368,6 +368,7 @@ release_artifacts:
   local_binary: target/release/TabbyMew
   macos_binary: target/<macos-target>/release/TabbyMew
   windows_binary: target/<windows-target>/release/TabbyMew.exe
+  windows_icon_resource: assets/app-icon.ico
   windows_tun_runtime_file: wintun.dll
   packaged_output_dir: target/release-artifacts/
 ```

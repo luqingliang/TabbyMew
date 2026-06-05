@@ -124,7 +124,8 @@ Build primary desktop platform artifacts under `target/release-artifacts/`:
 
 Each script writes a staged directory, `.tar.gz` archive, and `.sha256`
 checksum. Cross-target builds are opt-in through `TABBYMEW_MACOS_TARGET` and
-`TABBYMEW_WINDOWS_TARGET`.
+`TABBYMEW_WINDOWS_TARGET`. The Windows packaging script also verifies that the
+release executable has a PE resource section for the application icon.
 
 ## 6. Tagging
 
