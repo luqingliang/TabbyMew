@@ -10,6 +10,19 @@ relisted in release notes.
 
 ## [Unreleased]
 
+## [0.1.21] - 2026-06-05
+
+### Changed
+
+- Reuse macOS system proxy authorization within a single TabbyMew runtime session to avoid repeated prompts.
+- Use a session-scoped privileged TUN helper so TUN start and stop can reuse the same per-run authorization.
+- Shut down the privileged TUN helper during runtime cleanup to avoid helper residue after exit.
+
+### Fixed
+
+- Fix cross-platform permission imports for Linux CI builds.
+- Fix the TUN helper task handle import so test builds compile cleanly.
+
 ## [0.1.2] - 2026-06-05
 
 ### Added
