@@ -10,13 +10,24 @@ relisted in release notes.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-06-05
+
 ### Added
 
 - Add `subscription import-file` CLI support for importing and saving local subscription files.
+- Add the TabbyMew application icon to the README.
+- Embed the application icon in formal Windows release executables.
+- Add an Agent Contract document for stable CLI/JSON automation surfaces.
+
+### Changed
+
+- Refine CLI, TUI, runtime, and service command module boundaries while preserving the public command behavior.
+- Windows release packaging now verifies executable icon resources before producing the archive.
 
 ### Removed
 
 - Remove the standalone `import` CLI command.
+- Remove the Linux release packaging script from the formal release surface; macOS and Windows remain the release artifact targets.
 
 ## [0.1.1] - 2026-06-04
 
