@@ -5,7 +5,7 @@ use std::process::Command;
 #[cfg(target_os = "macos")]
 use std::sync::{Mutex, OnceLock};
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 use anyhow::Context;
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};

@@ -1,4 +1,6 @@
-use std::{collections::BTreeMap, fs, net::SocketAddr, path::PathBuf, time::Duration};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use std::collections::BTreeMap;
+use std::{fs, net::SocketAddr, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -13,17 +15,24 @@ use std::sync::{Arc, OnceLock};
 use tokio::process::Command;
 #[cfg(target_os = "windows")]
 use tokio::time::sleep;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    io::AsyncReadExt,
+    sync::{mpsc, oneshot, watch},
+    task::JoinHandle,
+};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{
         TcpListener, TcpStream,
         tcp::{OwnedReadHalf, OwnedWriteHalf},
     },
-    sync::{mpsc, oneshot, watch},
-    task::{JoinHandle, JoinSet},
+    task::JoinSet,
     time::timeout,
 };
-use tracing::{debug, info, warn};
+use tracing::debug;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use tracing::{info, warn};
 use tun2proxy::{Args as Tun2ProxyArgs, CancellationToken};
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
