@@ -111,6 +111,19 @@ pub(super) fn print_status_report(mut writer: impl Write, report: &StatusReport)
         value_u64(counters, &["route_selections_tcp"]).unwrap_or_default(),
         value_u64(counters, &["route_selections_udp"]).unwrap_or_default()
     )?;
+    if let (Some(upload), Some(download), Some(total)) = (
+        value_u64(counters, &["proxied_upload_bytes"]),
+        value_u64(counters, &["proxied_download_bytes"]),
+        value_u64(counters, &["proxied_total_bytes"]),
+    ) {
+        writeln!(
+            writer,
+            "  proxied traffic: upload={} download={} total={}",
+            format_memory_bytes(upload),
+            format_memory_bytes(download),
+            format_memory_bytes(total)
+        )?;
+    }
     if let Some(lines) = config.get("summary").and_then(Value::as_array) {
         writeln!(writer, "summary:")?;
         for line in lines.iter().filter_map(Value::as_str) {
@@ -190,8 +203,11 @@ pub(super) fn user_error_suggestion(error_code: &str) -> &'static str {
 pub(super) fn format_memory_bytes(bytes: u64) -> String {
     const KIB: f64 = 1024.0;
     const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
 
-    if bytes >= 1024 * 1024 {
+    if bytes >= 1024 * 1024 * 1024 {
+        format!("{:.1} GiB", bytes as f64 / GIB)
+    } else if bytes >= 1024 * 1024 {
         format!("{:.1} MiB", bytes as f64 / MIB)
     } else if bytes >= 1024 {
         format!("{:.1} KiB", bytes as f64 / KIB)

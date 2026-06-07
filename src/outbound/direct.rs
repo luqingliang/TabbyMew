@@ -54,6 +54,10 @@ impl Outbound for DirectOutbound {
         &self.tag
     }
 
+    fn counts_as_proxied_traffic(&self) -> bool {
+        false
+    }
+
     async fn connect(&self, session: &Session) -> Result<AnyStream> {
         let dest = &session.destination;
         debug!(outbound = %self.tag, destination = %dest, "direct TCP connecting");

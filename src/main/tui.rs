@@ -159,7 +159,7 @@ use self::{
     service::*,
     state::{
         ShellCommandSpec, ShellSession, TuiApp, TuiExitAction, TuiExitConfirmation, TuiMode,
-        TuiServiceStartup, TuiServiceStartupKind, TuiTerminal,
+        TuiServiceStartup, TuiServiceStartupKind, TuiTerminal, TuiTrafficSpeed,
     },
     terminal::*,
     tui_service::*,

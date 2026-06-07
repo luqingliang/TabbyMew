@@ -116,10 +116,27 @@ pub(crate) struct TuiApp {
     pub(crate) output: String,
     pub(crate) output_scroll: u16,
     pub(crate) dashboard_log_tail: String,
+    pub(crate) traffic_sample: Option<TuiTrafficSample>,
+    pub(crate) traffic_speed: TuiTrafficSpeed,
     pub(crate) last_message: String,
     pub(crate) last_refresh: Instant,
     pub(crate) exit_confirmation: Option<TuiExitConfirmation>,
     pub(crate) exit_action: Option<TuiExitAction>,
+}
+
+const TUI_TRAFFIC_SPEED_MAX_SAMPLE_AGE: Duration = Duration::from_secs(10);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TuiTrafficSample {
+    pub(crate) at: Instant,
+    pub(crate) upload_bytes: u64,
+    pub(crate) download_bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct TuiTrafficSpeed {
+    pub(crate) upload_bytes_per_second: Option<u64>,
+    pub(crate) download_bytes_per_second: Option<u64>,
 }
 
 pub(crate) async fn run_interactive_shell(
@@ -180,6 +197,7 @@ impl TuiApp {
     pub(crate) async fn new(session: ShellSession, startup_message: String) -> Result<Self> {
         let status = build_status_report(&session.state_dir, None, session.timeout).await?;
         let control_snapshot = collect_control_snapshot_for_report(&status, session.timeout).await;
+        let traffic_sample = tui_traffic_sample(control_snapshot.as_ref(), Instant::now());
         let dashboard_log_tail = tui_dashboard_log_tail(&session, &status, 80);
         Ok(Self {
             session,
@@ -222,6 +240,8 @@ impl TuiApp {
             output: String::new(),
             output_scroll: 0,
             dashboard_log_tail,
+            traffic_sample,
+            traffic_speed: TuiTrafficSpeed::default(),
             last_message: startup_message,
             last_refresh: Instant::now(),
             exit_confirmation: None,
@@ -242,9 +262,16 @@ impl TuiApp {
         self.status = status;
         self.control_snapshot =
             collect_control_snapshot_for_report(&self.status, self.session.timeout).await;
+        self.refresh_traffic_speed();
         self.dashboard_log_tail = tui_dashboard_log_tail(&self.session, &self.status, 80);
         self.last_refresh = Instant::now();
         Ok(())
+    }
+
+    fn refresh_traffic_speed(&mut self) {
+        let sample = tui_traffic_sample(self.control_snapshot.as_ref(), Instant::now());
+        self.traffic_speed = tui_traffic_speed_between(self.traffic_sample, sample);
+        self.traffic_sample = sample;
     }
 
     pub(crate) fn filtered_commands(&self) -> Vec<&'static ShellCommandSpec> {
@@ -381,6 +408,49 @@ impl TuiApp {
         self.subscription_add_field = self
             .subscription_add_field
             .min(TUI_SUBSCRIPTION_ADD_FIELDS - 1);
+    }
+}
+
+pub(crate) fn tui_traffic_sample(
+    control_snapshot: Option<&Value>,
+    at: Instant,
+) -> Option<TuiTrafficSample> {
+    let counters = control_snapshot?.get("counters")?;
+    Some(TuiTrafficSample {
+        at,
+        upload_bytes: value_u64(counters, &["proxied_upload_bytes"])?,
+        download_bytes: value_u64(counters, &["proxied_download_bytes"])?,
+    })
+}
+
+pub(crate) fn tui_traffic_speed_between(
+    previous: Option<TuiTrafficSample>,
+    current: Option<TuiTrafficSample>,
+) -> TuiTrafficSpeed {
+    let Some(previous) = previous else {
+        return TuiTrafficSpeed::default();
+    };
+    let Some(current) = current else {
+        return TuiTrafficSpeed::default();
+    };
+    let elapsed = current.at.saturating_duration_since(previous.at);
+    if elapsed.is_zero() || elapsed > TUI_TRAFFIC_SPEED_MAX_SAMPLE_AGE {
+        return TuiTrafficSpeed::default();
+    }
+    if current.upload_bytes < previous.upload_bytes
+        || current.download_bytes < previous.download_bytes
+    {
+        return TuiTrafficSpeed::default();
+    }
+
+    let seconds = elapsed.as_secs_f64();
+    TuiTrafficSpeed {
+        upload_bytes_per_second: Some(
+            ((current.upload_bytes - previous.upload_bytes) as f64 / seconds).round() as u64,
+        ),
+        download_bytes_per_second: Some(
+            ((current.download_bytes - previous.download_bytes) as f64 / seconds).round() as u64,
+        ),
     }
 }
 

@@ -20,6 +20,9 @@ use crate::{
 #[async_trait]
 pub trait Outbound: Send + Sync {
     fn tag(&self) -> &str;
+    fn counts_as_proxied_traffic(&self) -> bool {
+        true
+    }
     async fn connect(&self, session: &Session) -> Result<AnyStream>;
     async fn udp_session(&self, _session: &Session) -> Result<Box<dyn UdpOutboundSession>> {
         bail!("{} outbound does not support UDP", self.tag())

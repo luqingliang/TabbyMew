@@ -23,6 +23,10 @@ impl Outbound for BlockOutbound {
         &self.tag
     }
 
+    fn counts_as_proxied_traffic(&self) -> bool {
+        false
+    }
+
     async fn connect(&self, session: &Session) -> Result<AnyStream> {
         bail!("blocked connection to {}", session.destination)
     }

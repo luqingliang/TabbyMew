@@ -4,6 +4,8 @@ pub struct RuntimeMetrics {
     route_selections_total: AtomicU64,
     route_tcp: AtomicU64,
     route_udp: AtomicU64,
+    proxied_upload_bytes: AtomicU64,
+    proxied_download_bytes: AtomicU64,
     route_by_inbound: Mutex<BTreeMap<String, u64>>,
     route_by_outbound: Mutex<BTreeMap<String, u64>>,
 }
@@ -15,6 +17,8 @@ impl RuntimeMetrics {
             route_selections_total: AtomicU64::new(0),
             route_tcp: AtomicU64::new(0),
             route_udp: AtomicU64::new(0),
+            proxied_upload_bytes: AtomicU64::new(0),
+            proxied_download_bytes: AtomicU64::new(0),
             route_by_inbound: Mutex::new(BTreeMap::new()),
             route_by_outbound: Mutex::new(BTreeMap::new()),
         }
@@ -35,12 +39,27 @@ impl RuntimeMetrics {
         increment_counter(&self.route_by_outbound, outbound_tag);
     }
 
+    pub fn record_proxied_upload(&self, bytes: u64) {
+        self.proxied_upload_bytes
+            .fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    pub fn record_proxied_download(&self, bytes: u64) {
+        self.proxied_download_bytes
+            .fetch_add(bytes, Ordering::Relaxed);
+    }
+
     pub fn snapshot(&self) -> CountersSnapshot {
+        let proxied_upload_bytes = self.proxied_upload_bytes.load(Ordering::Relaxed);
+        let proxied_download_bytes = self.proxied_download_bytes.load(Ordering::Relaxed);
         CountersSnapshot {
             uptime_seconds: self.started_at.elapsed().as_secs(),
             route_selections_total: self.route_selections_total.load(Ordering::Relaxed),
             route_selections_tcp: self.route_tcp.load(Ordering::Relaxed),
             route_selections_udp: self.route_udp.load(Ordering::Relaxed),
+            proxied_upload_bytes,
+            proxied_download_bytes,
+            proxied_total_bytes: proxied_upload_bytes.saturating_add(proxied_download_bytes),
             route_selections_by_inbound: self
                 .route_by_inbound
                 .lock()
@@ -67,6 +86,9 @@ pub struct CountersSnapshot {
     pub route_selections_total: u64,
     pub route_selections_tcp: u64,
     pub route_selections_udp: u64,
+    pub proxied_upload_bytes: u64,
+    pub proxied_download_bytes: u64,
+    pub proxied_total_bytes: u64,
     pub route_selections_by_inbound: BTreeMap<String, u64>,
     pub route_selections_by_outbound: BTreeMap<String, u64>,
 }

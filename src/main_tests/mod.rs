@@ -76,6 +76,8 @@ fn test_tui_app() -> TuiApp {
         output: String::new(),
         output_scroll: 0,
         dashboard_log_tail: String::new(),
+        traffic_sample: None,
+        traffic_speed: TuiTrafficSpeed::default(),
         last_message: String::new(),
         last_refresh: Instant::now(),
         exit_confirmation: None,

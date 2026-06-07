@@ -1,7 +1,7 @@
 use std::{io, net::SocketAddr, sync::Arc, time::Duration};
 
 use tokio::{
-    io::{AsyncRead, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::{OwnedSemaphorePermit, Semaphore},
     time::sleep,
@@ -82,17 +82,52 @@ where
     L: AsyncRead + AsyncWrite + Unpin,
     R: AsyncRead + AsyncWrite + Unpin,
 {
+    relay_until_first_eof_with_counters(left, right, |_| {}, |_| {}).await
+}
+
+pub async fn relay_until_first_eof_with_counters<L, R, F, G>(
+    left: &mut L,
+    right: &mut R,
+    on_left_to_right: F,
+    on_right_to_left: G,
+) -> io::Result<()>
+where
+    L: AsyncRead + AsyncWrite + Unpin,
+    R: AsyncRead + AsyncWrite + Unpin,
+    F: Fn(u64),
+    G: Fn(u64),
+{
     let result = {
         let (mut left_read, mut left_write) = tokio::io::split(&mut *left);
         let (mut right_read, mut right_write) = tokio::io::split(&mut *right);
         tokio::select! {
-            result = tokio::io::copy(&mut left_read, &mut right_write) => result.map(|_| ()),
-            result = tokio::io::copy(&mut right_read, &mut left_write) => result.map(|_| ()),
+            result = copy_with_counter(&mut left_read, &mut right_write, on_left_to_right) => result.map(|_| ()),
+            result = copy_with_counter(&mut right_read, &mut left_write, on_right_to_left) => result.map(|_| ()),
         }
     };
     let _ = left.shutdown().await;
     let _ = right.shutdown().await;
     result
+}
+
+async fn copy_with_counter<R, W, F>(reader: &mut R, writer: &mut W, on_chunk: F) -> io::Result<u64>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+    F: Fn(u64),
+{
+    let mut buf = [0u8; 16 * 1024];
+    let mut total = 0u64;
+    loop {
+        let n = reader.read(&mut buf).await?;
+        if n == 0 {
+            return Ok(total);
+        }
+        writer.write_all(&buf[..n]).await?;
+        let bytes = n as u64;
+        total = total.saturating_add(bytes);
+        on_chunk(bytes);
+    }
 }
 
 fn is_retriable_accept_error(err: &io::Error) -> bool {

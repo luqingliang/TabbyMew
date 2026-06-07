@@ -16,6 +16,7 @@ pub(crate) fn dashboard_status_row_tone(label: &str, value: &str) -> Option<Dash
         "TUN" => Some(tun_dashboard_status_tone(value)),
         "Route Mode" | "Routing" => Some(DashboardStatusTone::Accent),
         "Memory" if value != "-" => Some(DashboardStatusTone::Accent),
+        "Traffic" if value != "-" => Some(DashboardStatusTone::Accent),
         "Issues" if value == "none" => Some(DashboardStatusTone::Muted),
         "Issues" => Some(DashboardStatusTone::Warning),
         _ => None,
@@ -111,7 +112,7 @@ pub(crate) struct TuiStatusSummary {
     pub(crate) policy_groups: String,
     pub(crate) route_rules: String,
     pub(crate) dns: String,
-    pub(crate) route_selections: String,
+    pub(crate) traffic: String,
     pub(crate) system_proxy: String,
     pub(crate) tun: String,
     pub(crate) tun_detail: String,
@@ -126,6 +127,7 @@ pub(crate) struct TuiStatusSummary {
 pub(crate) fn tui_status_summary(
     report: &StatusReport,
     control_snapshot: Option<&Value>,
+    traffic_speed: TuiTrafficSpeed,
 ) -> TuiStatusSummary {
     let service = &report.service;
     let service_state = if service.needs_cleanup() {
@@ -169,13 +171,7 @@ pub(crate) fn tui_status_summary(
         .and_then(|config| value_str(config, &["dns"]))
         .map(str::to_string)
         .unwrap_or_else(|| "-".to_string());
-    let route_selections = report
-        .control_api
-        .as_ref()
-        .and_then(|control| control.counters.as_ref())
-        .and_then(|counters| value_u64(counters, &["route_selections_total"]))
-        .unwrap_or_default()
-        .to_string();
+    let traffic = format_tui_traffic(report, control_snapshot, traffic_speed);
     let proxy = format_tui_proxy_state(control_snapshot);
     let lan_proxy = format_tui_lan_proxy_state(control_snapshot);
     let route_mode = control_snapshot
@@ -242,7 +238,7 @@ pub(crate) fn tui_status_summary(
         policy_groups,
         route_rules,
         dns,
-        route_selections,
+        traffic,
         system_proxy,
         tun,
         tun_detail,
@@ -252,6 +248,58 @@ pub(crate) fn tui_status_summary(
         cleanup_items: service.cleanup_items.clone(),
         state_error: service.state_error.clone(),
         preference_error: service.preference_error.clone(),
+    }
+}
+
+pub(crate) fn format_tui_traffic(
+    report: &StatusReport,
+    control_snapshot: Option<&Value>,
+    traffic_speed: TuiTrafficSpeed,
+) -> String {
+    let counters = control_snapshot
+        .and_then(|value| value.get("counters"))
+        .or_else(|| {
+            report
+                .control_api
+                .as_ref()
+                .and_then(|control| control.counters.as_ref())
+        });
+    let Some(counters) = counters else {
+        return "-".to_string();
+    };
+    let Some(upload) = value_u64(counters, &["proxied_upload_bytes"]) else {
+        return "-".to_string();
+    };
+    let Some(download) = value_u64(counters, &["proxied_download_bytes"]) else {
+        return "-".to_string();
+    };
+    format!(
+        "U {} @ {}  D {} @ {}",
+        format_traffic_bytes(upload),
+        format_traffic_speed(traffic_speed.upload_bytes_per_second),
+        format_traffic_bytes(download),
+        format_traffic_speed(traffic_speed.download_bytes_per_second),
+    )
+}
+
+pub(crate) fn format_traffic_speed(bytes_per_second: Option<u64>) -> String {
+    bytes_per_second
+        .map(|bytes| format!("{}/s", format_traffic_bytes(bytes)))
+        .unwrap_or_else(|| "-/s".to_string())
+}
+
+pub(crate) fn format_traffic_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = 1024.0 * KIB;
+    const GIB: f64 = 1024.0 * MIB;
+    if bytes >= 1024 * 1024 * 1024 {
+        format!("{:.1} GiB", bytes as f64 / GIB)
+    } else if bytes >= 1024 * 1024 {
+        format!("{:.1} MiB", bytes as f64 / MIB)
+    } else if bytes >= 1024 {
+        format!("{:.1} KiB", bytes as f64 / KIB)
+    } else {
+        format!("{bytes} B")
     }
 }
 

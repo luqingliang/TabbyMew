@@ -16,6 +16,7 @@ use tokio::{
 use tracing::{debug, info, warn};
 
 use crate::{
+    control::RuntimeMetrics,
     inbound::listen,
     net::{
         address::{
@@ -138,8 +139,37 @@ pub async fn handle_tcp(
         outbound = %outbound.tag(),
         "SOCKS connection established"
     );
-    let _ = tcp::relay_until_first_eof(&mut inbound, &mut outbound_stream).await;
+    relay_tcp_with_optional_traffic(
+        &router,
+        outbound.as_ref(),
+        &mut inbound,
+        &mut outbound_stream,
+    )
+    .await;
     Ok(())
+}
+
+async fn relay_tcp_with_optional_traffic<L, R>(
+    router: &Router,
+    outbound: &dyn crate::outbound::Outbound,
+    inbound: &mut L,
+    outbound_stream: &mut R,
+) where
+    L: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    R: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    if let Some(metrics) = router.proxied_traffic_metrics(outbound) {
+        let upload_metrics = metrics.clone();
+        let _ = tcp::relay_until_first_eof_with_counters(
+            inbound,
+            outbound_stream,
+            move |bytes| upload_metrics.record_proxied_upload(bytes),
+            move |bytes| metrics.record_proxied_download(bytes),
+        )
+        .await;
+    } else {
+        let _ = tcp::relay_until_first_eof(inbound, outbound_stream).await;
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -399,6 +429,7 @@ async fn serve_udp_relay(
                     }
                 };
                 let session_key = format!("{}|{}", outbound.tag(), packet.destination);
+                let traffic_metrics = router.proxied_traffic_metrics(outbound.as_ref());
                 let udp_session = match sessions.get(&session_key) {
                     Some(session) => session.session.clone(),
                     None => {
@@ -422,7 +453,12 @@ async fn serve_udp_relay(
                             network = "udp",
                             "connection routed"
                         );
-                        let receiver = spawn_udp_receiver(session_key.clone(), created.clone(), response_tx.clone());
+                        let receiver = spawn_udp_receiver(
+                            session_key.clone(),
+                            created.clone(),
+                            traffic_metrics.clone(),
+                            response_tx.clone(),
+                        );
                         sessions.insert(session_key.clone(), UdpRelaySession {
                             session: created.clone(),
                             receiver,
@@ -437,6 +473,8 @@ async fn serve_udp_relay(
 
                 if let Err(err) = udp_session.send(&packet.destination, &packet.data).await {
                     warn!(error = %err, destination = %packet.destination, outbound = %outbound.tag(), "failed to send outbound UDP packet");
+                } else if let Some(metrics) = traffic_metrics {
+                    metrics.record_proxied_upload(packet.data.len() as u64);
                 }
             }
             response = response_rx.recv() => {
@@ -503,12 +541,16 @@ fn evict_udp_relay_session_if_needed(sessions: &mut HashMap<String, UdpRelaySess
 fn spawn_udp_receiver(
     session_key: String,
     session: Arc<dyn UdpOutboundSession>,
+    traffic_metrics: Option<Arc<RuntimeMetrics>>,
     response_tx: mpsc::Sender<UdpPacket>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         loop {
             match session.recv().await {
                 Ok(packet) => {
+                    if let Some(metrics) = &traffic_metrics {
+                        metrics.record_proxied_download(packet.data.len() as u64);
+                    }
                     if response_tx.send(packet).await.is_err() {
                         break;
                     }

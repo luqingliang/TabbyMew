@@ -10,7 +10,11 @@ pub(crate) fn draw_tui_dashboard(frame: &mut Frame<'_>, app: &TuiApp) {
             Constraint::Length(4),
         ])
         .split(area);
-    let summary = tui_status_summary(&app.status, app.control_snapshot.as_ref());
+    let summary = tui_status_summary(
+        &app.status,
+        app.control_snapshot.as_ref(),
+        app.traffic_speed,
+    );
 
     let header = Paragraph::new(vec![
         Line::from(vec![
@@ -141,7 +145,7 @@ pub(crate) fn draw_tui_dashboard_wide(
             ("Policy Groups", summary.policy_groups.clone()),
             ("Rules", summary.route_rules.clone()),
             ("DNS", summary.dns.clone()),
-            ("Route Hits", summary.route_selections.clone()),
+            ("Traffic", summary.traffic.clone()),
         ],
         Style::default().fg(Color::Cyan),
     );
@@ -191,6 +195,7 @@ pub(crate) fn draw_tui_dashboard_narrow(
             ),
             ("Groups", summary.policy_groups.clone()),
             ("Rules", summary.route_rules.clone()),
+            ("Traffic", summary.traffic.clone()),
             ("System Proxy", summary.system_proxy.clone()),
             ("TUN", summary.tun.clone()),
             ("Subscriptions", summary.subscriptions.clone()),

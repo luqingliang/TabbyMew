@@ -139,7 +139,13 @@ pub async fn handle_tcp(
             outbound = %outbound.tag(),
             "HTTP CONNECT established"
         );
-        let _ = tcp::relay_until_first_eof(&mut inbound, &mut outbound_stream).await;
+        relay_tcp_with_optional_traffic(
+            &router,
+            outbound.as_ref(),
+            &mut inbound,
+            &mut outbound_stream,
+        )
+        .await;
         return Ok(());
     }
 
@@ -179,6 +185,9 @@ pub async fn handle_tcp(
         "connection routed"
     );
     outbound_stream.write_all(rewritten.as_bytes()).await?;
+    if let Some(metrics) = router.proxied_traffic_metrics(outbound.as_ref()) {
+        metrics.record_proxied_upload(rewritten.len() as u64);
+    }
     outbound_stream.flush().await?;
     debug!(
         source = ?session.source,
@@ -187,8 +196,37 @@ pub async fn handle_tcp(
         outbound = %outbound.tag(),
         "plain HTTP proxy established"
     );
-    let _ = tcp::relay_until_first_eof(&mut inbound, &mut outbound_stream).await;
+    relay_tcp_with_optional_traffic(
+        &router,
+        outbound.as_ref(),
+        &mut inbound,
+        &mut outbound_stream,
+    )
+    .await;
     Ok(())
+}
+
+async fn relay_tcp_with_optional_traffic<L, R>(
+    router: &Router,
+    outbound: &dyn crate::outbound::Outbound,
+    inbound: &mut L,
+    outbound_stream: &mut R,
+) where
+    L: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    R: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    if let Some(metrics) = router.proxied_traffic_metrics(outbound) {
+        let upload_metrics = metrics.clone();
+        let _ = tcp::relay_until_first_eof_with_counters(
+            inbound,
+            outbound_stream,
+            move |bytes| upload_metrics.record_proxied_upload(bytes),
+            move |bytes| metrics.record_proxied_download(bytes),
+        )
+        .await;
+    } else {
+        let _ = tcp::relay_until_first_eof(inbound, outbound_stream).await;
+    }
 }
 
 async fn read_http_head(stream: &mut TcpStream) -> Result<Vec<u8>> {

@@ -653,6 +653,14 @@ impl Router {
         Ok(outbound)
     }
 
+    pub fn proxied_traffic_metrics(&self, outbound: &dyn Outbound) -> Option<Arc<RuntimeMetrics>> {
+        if outbound.counts_as_proxied_traffic() {
+            self.inner.metrics.clone()
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn dns_resolver(&self) -> Option<Arc<DnsResolver>> {
         self.inner.dns.clone()
     }

@@ -38,6 +38,8 @@ mod tests {
             ),
             "http-out",
         );
+        metrics.record_proxied_upload(123);
+        metrics.record_proxied_download(456);
         let state = ControlState::new(summary(), metrics);
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
@@ -60,6 +62,9 @@ mod tests {
         assert_eq!(counters["route_selections_tcp"], 1);
         assert_eq!(counters["route_selections_by_inbound"]["hybrid-in"], 1);
         assert_eq!(counters["route_selections_by_outbound"]["http-out"], 1);
+        assert_eq!(counters["proxied_upload_bytes"], 123);
+        assert_eq!(counters["proxied_download_bytes"], 456);
+        assert_eq!(counters["proxied_total_bytes"], 579);
 
         task.abort();
         Ok(())

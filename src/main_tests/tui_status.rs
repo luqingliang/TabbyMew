@@ -42,6 +42,9 @@ fn tui_status_summary_includes_core_sections() {
             })),
             counters: Some(serde_json::json!({
                 "route_selections_total": 7,
+                "proxied_upload_bytes": 1536,
+                "proxied_download_bytes": 2 * 1024 * 1024,
+                "proxied_total_bytes": 2 * 1024 * 1024 + 1536,
             })),
             error_code: None,
             error: None,
@@ -103,9 +106,18 @@ fn tui_status_summary_includes_core_sections() {
         },
         "process": {
             "config_path": "/tmp/config.json"
+        },
+        "counters": {
+            "proxied_upload_bytes": 1536,
+            "proxied_download_bytes": 2 * 1024 * 1024,
+            "proxied_total_bytes": 2 * 1024 * 1024 + 1536
         }
     });
-    let summary = tui_status_summary(&report, Some(&control_snapshot));
+    let traffic_speed = TuiTrafficSpeed {
+        upload_bytes_per_second: Some(512),
+        download_bytes_per_second: Some(1536),
+    };
+    let summary = tui_status_summary(&report, Some(&control_snapshot), traffic_speed);
 
     assert_eq!(summary.service_state, "running");
     assert_eq!(summary.control_state, "healthy at http://127.0.0.1:9090");
@@ -116,6 +128,10 @@ fn tui_status_summary_includes_core_sections() {
     assert_eq!(summary.lan_proxy, "off local-only hybrid 127.0.0.1:17890");
     assert_eq!(summary.policy_groups, "2 groups, 2 selected");
     assert_eq!(summary.route_rules, "1 custom, 2 subscription");
+    assert_eq!(
+        summary.traffic,
+        "U 1.5 KiB @ 512 B/s  D 2.0 MiB @ 1.5 KiB/s"
+    );
     assert_eq!(summary.system_proxy, "on (managed)");
     assert_eq!(summary.tun, "on");
     assert_eq!(summary.subscriptions, "1");
@@ -135,6 +151,10 @@ fn tui_status_summary_includes_core_sections() {
     assert_eq!(
         dashboard_status_row_tone("System Proxy", &summary.system_proxy),
         Some(DashboardStatusTone::Good)
+    );
+    assert_eq!(
+        dashboard_status_row_tone("Traffic", &summary.traffic),
+        Some(DashboardStatusTone::Accent)
     );
     assert_eq!(
         dashboard_status_row_tone("TUN", &summary.tun),
@@ -207,6 +227,49 @@ fn formats_memory_bytes_for_status_display() {
     assert_eq!(format_memory_bytes(512), "512 B");
     assert_eq!(format_memory_bytes(1536), "1.5 KiB");
     assert_eq!(format_memory_bytes(44 * 1024 * 1024), "44.0 MiB");
+    assert_eq!(format_memory_bytes(3 * 1024 * 1024 * 1024), "3.0 GiB");
+    assert_eq!(format_traffic_bytes(512), "512 B");
+    assert_eq!(format_traffic_bytes(1536), "1.5 KiB");
+    assert_eq!(format_traffic_speed(Some(1536)), "1.5 KiB/s");
+    assert_eq!(format_traffic_speed(None), "-/s");
+}
+
+#[test]
+fn tui_traffic_speed_uses_recent_counter_delta_only() {
+    let base = Instant::now();
+    let previous = TuiTrafficSample {
+        at: base,
+        upload_bytes: 100,
+        download_bytes: 200,
+    };
+    let current = TuiTrafficSample {
+        at: base + Duration::from_secs(2),
+        upload_bytes: 1100,
+        download_bytes: 4200,
+    };
+    let speed = tui_traffic_speed_between(Some(previous), Some(current));
+    assert_eq!(speed.upload_bytes_per_second, Some(500));
+    assert_eq!(speed.download_bytes_per_second, Some(2000));
+
+    let stale = TuiTrafficSample {
+        at: base + Duration::from_secs(11),
+        upload_bytes: 2100,
+        download_bytes: 6200,
+    };
+    assert_eq!(
+        tui_traffic_speed_between(Some(previous), Some(stale)),
+        TuiTrafficSpeed::default()
+    );
+
+    let reset = TuiTrafficSample {
+        at: base + Duration::from_secs(2),
+        upload_bytes: 50,
+        download_bytes: 100,
+    };
+    assert_eq!(
+        tui_traffic_speed_between(Some(previous), Some(reset)),
+        TuiTrafficSpeed::default()
+    );
 }
 
 #[test]
