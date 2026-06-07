@@ -446,6 +446,12 @@ mod tests {
     }
 
     #[test]
+    fn process_running_detects_current_process_without_external_probe() {
+        assert!(is_process_running(std::process::id()));
+        assert!(!is_process_running(0));
+    }
+
+    #[test]
     fn service_status_reports_stale_dead_pid() -> Result<()> {
         let dir = temp_test_dir("tabbymew-service-status-stale-test")?;
         let state = ProcessState {

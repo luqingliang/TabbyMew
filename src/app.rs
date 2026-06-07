@@ -5,13 +5,14 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use tokio::{signal, sync::Notify, task::JoinSet, time};
 use tracing::{error, info, warn};
 
 use crate::{
     config::Config,
     control::{self, ControlApiState, ControlState, RuntimeMetrics},
+    net::egress,
     platform, process_manager,
     proxy_runtime::{ProxyRuntime, ProxyRuntimeSnapshot, TunRuntimeStatus},
     resource_limits,
@@ -25,11 +26,35 @@ const TUN_WATCHDOG_INTERVAL: Duration = Duration::from_secs(15);
 const TUN_WATCHDOG_RESUME_GAP: Duration = Duration::from_secs(120);
 const TUN_WATCHDOG_RECOVERY_COOLDOWN: Duration = Duration::from_secs(60);
 const TUN_WATCHDOG_FAST_RECOVERY_COOLDOWN: Duration = TUN_WATCHDOG_INTERVAL;
+const TUN_WATCHDOG_NETWORK_READY_DEBOUNCE: Duration = Duration::from_secs(5);
+const TUN_WATCHDOG_NETWORK_READY_POLL: Duration = Duration::from_secs(2);
+const TUN_WATCHDOG_NETWORK_READY_TIMEOUT: Duration = Duration::from_secs(20);
+const TUN_WATCHDOG_NETWORK_READY_STABLE_SAMPLES: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TunWatchdogRecoveryAttempt {
     at: u64,
     cooldown: Duration,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TunWatchdogRecoveryReason {
+    kind: TunWatchdogRecoveryKind,
+    message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TunWatchdogRecoveryKind {
+    ListenerStopped,
+    SleepWake,
+    Status,
+    EgressBinding,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TunWatchdogNetworkReadiness {
+    interface: String,
+    attempts: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -241,7 +266,7 @@ async fn run_tun_watchdog(proxy_runtime: Arc<ProxyRuntime>, shutdown: Arc<Notify
                         .map(|attempt| attempt.cooldown)
                         .unwrap_or(TUN_WATCHDOG_RECOVERY_COOLDOWN);
                     warn!(
-                        reason = %reason,
+                        reason = %reason.message,
                         elapsed_seconds = elapsed,
                         cooldown_seconds = cooldown.as_secs(),
                         "skipped TUN recovery condition during cooldown"
@@ -250,7 +275,7 @@ async fn run_tun_watchdog(proxy_runtime: Arc<ProxyRuntime>, shutdown: Arc<Notify
                 }
 
                 warn!(
-                    reason = %reason,
+                    reason = %reason.message,
                     elapsed_seconds = elapsed,
                     desired_enabled = snapshot.tun_desired_enabled,
                     enabled = snapshot.tun_enabled,
@@ -259,18 +284,55 @@ async fn run_tun_watchdog(proxy_runtime: Arc<ProxyRuntime>, shutdown: Arc<Notify
                     bound_interface = snapshot.tun_bound_interface.as_deref().unwrap_or("-"),
                     "detected TUN recovery condition"
                 );
-                let recovery = proxy_runtime.restart_tun_for_recovery(reason).await;
+                if should_gate_tun_watchdog_recovery_on_network(&snapshot, &reason) {
+                    let Some(readiness) =
+                        wait_for_tun_watchdog_network_ready(&reason, shutdown.clone()).await
+                    else {
+                        return;
+                    };
+                    match readiness {
+                        Ok(readiness) => info!(
+                            reason = %reason.message,
+                            interface = %readiness.interface,
+                            attempts = readiness.attempts,
+                            stable_samples = TUN_WATCHDOG_NETWORK_READY_STABLE_SAMPLES,
+                            "network state ready for TUN recovery"
+                        ),
+                        Err(err) => {
+                            let cooldown = tun_watchdog_recovery_cooldown_for_error(&err);
+                            last_recovery_attempt = Some(TunWatchdogRecoveryAttempt {
+                                at: unix_now(),
+                                cooldown,
+                            });
+                            warn!(
+                                reason = %reason.message,
+                                elapsed_seconds = elapsed,
+                                retry_cooldown_seconds = cooldown.as_secs(),
+                                error = %err,
+                                "deferred TUN recovery until network state is ready"
+                            );
+                            continue;
+                        }
+                    }
+                }
+
+                let recovery = proxy_runtime
+                    .restart_tun_for_recovery(reason.message.clone())
+                    .await;
                 let cooldown = match recovery.as_ref() {
                     Ok(_) => TUN_WATCHDOG_RECOVERY_COOLDOWN,
                     Err(err) => tun_watchdog_recovery_cooldown_for_error(err),
                 };
-                last_recovery_attempt = Some(TunWatchdogRecoveryAttempt { at: now, cooldown });
+                last_recovery_attempt = Some(TunWatchdogRecoveryAttempt {
+                    at: unix_now(),
+                    cooldown,
+                });
                 if let Err(err) = recovery {
                     warn!(
                         elapsed_seconds = elapsed,
                         retry_cooldown_seconds = cooldown.as_secs(),
                         error = %err,
-                        "failed to recover TUN after runtime timer gap"
+                        "failed to recover TUN after watchdog condition"
                     );
                 }
             }
@@ -281,40 +343,146 @@ async fn run_tun_watchdog(proxy_runtime: Arc<ProxyRuntime>, shutdown: Arc<Notify
 fn tun_watchdog_recovery_reason(
     snapshot: &ProxyRuntimeSnapshot,
     elapsed_seconds: u64,
-) -> Option<String> {
+) -> Option<TunWatchdogRecoveryReason> {
     if snapshot.tun_desired_enabled && !snapshot.tun_enabled {
-        return Some("TUN listener stopped unexpectedly while desired on".to_string());
+        return Some(TunWatchdogRecoveryReason {
+            kind: TunWatchdogRecoveryKind::ListenerStopped,
+            message: "TUN listener stopped unexpectedly while desired on".to_string(),
+        });
     }
     if !(snapshot.tun_enabled && snapshot.tun_auto_route) {
         return None;
     }
     if should_restart_tun_after_watchdog_gap(elapsed_seconds) {
-        return Some(format!(
-            "runtime timer gap after sleep/wake ({elapsed_seconds}s)"
-        ));
+        return Some(TunWatchdogRecoveryReason {
+            kind: TunWatchdogRecoveryKind::SleepWake,
+            message: format!("runtime timer gap after sleep/wake ({elapsed_seconds}s)"),
+        });
     }
     if snapshot.tun_status != TunRuntimeStatus::Running {
-        return Some(format!(
-            "TUN enabled but runtime status is {:?}",
-            snapshot.tun_status
-        ));
+        return Some(TunWatchdogRecoveryReason {
+            kind: TunWatchdogRecoveryKind::Status,
+            message: format!(
+                "TUN enabled but runtime status is {:?}",
+                snapshot.tun_status
+            ),
+        });
     }
     tun_egress_binding_recovery_reason(snapshot)
 }
 
-fn tun_egress_binding_recovery_reason(snapshot: &ProxyRuntimeSnapshot) -> Option<String> {
+fn tun_egress_binding_recovery_reason(
+    snapshot: &ProxyRuntimeSnapshot,
+) -> Option<TunWatchdogRecoveryReason> {
     if !platform::tun_egress_binding_supported_for_name(snapshot.tun_platform) {
         return None;
     }
     let Some(expected) = snapshot.tun_egress_interface.as_deref() else {
-        return Some("TUN auto route is missing a captured egress interface".to_string());
+        return Some(TunWatchdogRecoveryReason {
+            kind: TunWatchdogRecoveryKind::EgressBinding,
+            message: "TUN auto route is missing a captured egress interface".to_string(),
+        });
     };
     match snapshot.tun_bound_interface.as_deref() {
         Some(bound) if bound == expected => None,
-        Some(bound) => Some(format!(
-            "TUN egress binding drifted from {expected} to {bound}"
-        )),
-        None => Some(format!("TUN egress binding for {expected} is missing")),
+        Some(bound) => Some(TunWatchdogRecoveryReason {
+            kind: TunWatchdogRecoveryKind::EgressBinding,
+            message: format!("TUN egress binding drifted from {expected} to {bound}"),
+        }),
+        None => Some(TunWatchdogRecoveryReason {
+            kind: TunWatchdogRecoveryKind::EgressBinding,
+            message: format!("TUN egress binding for {expected} is missing"),
+        }),
+    }
+}
+
+fn should_gate_tun_watchdog_recovery_on_network(
+    snapshot: &ProxyRuntimeSnapshot,
+    reason: &TunWatchdogRecoveryReason,
+) -> bool {
+    snapshot.tun_auto_route
+        && platform::tun_egress_binding_supported_for_name(snapshot.tun_platform)
+        && matches!(
+            reason.kind,
+            TunWatchdogRecoveryKind::ListenerStopped
+                | TunWatchdogRecoveryKind::SleepWake
+                | TunWatchdogRecoveryKind::EgressBinding
+        )
+}
+
+async fn wait_for_tun_watchdog_network_ready(
+    reason: &TunWatchdogRecoveryReason,
+    shutdown: Arc<Notify>,
+) -> Option<Result<TunWatchdogNetworkReadiness>> {
+    info!(
+        reason = %reason.message,
+        debounce_seconds = TUN_WATCHDOG_NETWORK_READY_DEBOUNCE.as_secs(),
+        timeout_seconds = TUN_WATCHDOG_NETWORK_READY_TIMEOUT.as_secs(),
+        required_stable_samples = TUN_WATCHDOG_NETWORK_READY_STABLE_SAMPLES,
+        "waiting for network state before TUN recovery"
+    );
+
+    if sleep_tun_watchdog_with_shutdown(TUN_WATCHDOG_NETWORK_READY_DEBOUNCE, &shutdown).await {
+        return None;
+    }
+
+    let deadline = time::Instant::now() + TUN_WATCHDOG_NETWORK_READY_TIMEOUT;
+    let mut attempts = 0usize;
+    let mut stable_samples = 0usize;
+    let mut last_interface = None::<String>;
+    let mut last_error: Option<String>;
+
+    loop {
+        attempts = attempts.saturating_add(1);
+        match egress::default_interface_name() {
+            Ok(interface) if interface.trim().is_empty() => {
+                stable_samples = 0;
+                last_interface = None;
+                last_error = Some("default network interface is empty".to_string());
+            }
+            Ok(interface) => {
+                if last_interface.as_deref() == Some(interface.as_str()) {
+                    stable_samples = stable_samples.saturating_add(1);
+                } else {
+                    stable_samples = 1;
+                    last_interface = Some(interface.clone());
+                }
+                last_error = None;
+                if stable_samples >= TUN_WATCHDOG_NETWORK_READY_STABLE_SAMPLES {
+                    return Some(Ok(TunWatchdogNetworkReadiness {
+                        interface,
+                        attempts,
+                    }));
+                }
+            }
+            Err(err) => {
+                stable_samples = 0;
+                last_interface = None;
+                last_error = Some(format!("{err:#}"));
+            }
+        }
+
+        let now = time::Instant::now();
+        if now >= deadline {
+            return Some(Err(anyhow!(
+                "network state not ready for TUN recovery after {}s; attempts={}; last_interface={}; last_error={}",
+                TUN_WATCHDOG_NETWORK_READY_TIMEOUT.as_secs(),
+                attempts,
+                last_interface.as_deref().unwrap_or("-"),
+                last_error.as_deref().unwrap_or("-")
+            )));
+        }
+        let delay = TUN_WATCHDOG_NETWORK_READY_POLL.min(deadline.saturating_duration_since(now));
+        if sleep_tun_watchdog_with_shutdown(delay, &shutdown).await {
+            return None;
+        }
+    }
+}
+
+async fn sleep_tun_watchdog_with_shutdown(duration: Duration, shutdown: &Arc<Notify>) -> bool {
+    tokio::select! {
+        _ = shutdown.notified() => true,
+        _ = time::sleep(duration) => false,
     }
 }
 
@@ -332,7 +500,10 @@ fn should_attempt_tun_watchdog_recovery(
 }
 
 fn tun_watchdog_recovery_cooldown_for_error(err: &anyhow::Error) -> Duration {
-    if is_fd_exhaustion_error_message(&format!("{err:#}")) {
+    let message = format!("{err:#}");
+    if is_fd_exhaustion_error_message(&message)
+        || is_network_state_unavailable_error_message(&message)
+    {
         TUN_WATCHDOG_FAST_RECOVERY_COOLDOWN
     } else {
         TUN_WATCHDOG_RECOVERY_COOLDOWN
@@ -346,6 +517,16 @@ fn is_fd_exhaustion_error_message(message: &str) -> bool {
         || message.contains("os error 23")
         || message.contains("emfile")
         || message.contains("enfile")
+}
+
+fn is_network_state_unavailable_error_message(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("network state not ready")
+        || message.contains("failed to read network state")
+        || message.contains("failed to capture current network interface")
+        || message.contains("failed to read primary network interface")
+        || message.contains("network state is not a dictionary")
+        || message.contains("failed to create sc dynamicstore")
 }
 
 async fn run_runtime_state_heartbeat(options: RunOptions, shutdown: Arc<Notify>) {
@@ -843,6 +1024,7 @@ mod tests {
                 ),
                 15,
                 "desired on",
+                TunWatchdogRecoveryKind::ListenerStopped,
             ),
             (
                 test_tun_snapshot(
@@ -855,6 +1037,7 @@ mod tests {
                 ),
                 180,
                 "sleep/wake",
+                TunWatchdogRecoveryKind::SleepWake,
             ),
             (
                 test_tun_snapshot(
@@ -867,15 +1050,60 @@ mod tests {
                 ),
                 15,
                 "drifted",
+                TunWatchdogRecoveryKind::EgressBinding,
             ),
         ] {
-            let (snapshot, elapsed_seconds, expected_reason) = case;
-            assert!(
-                tun_watchdog_recovery_reason(&snapshot, elapsed_seconds)
-                    .unwrap()
-                    .contains(expected_reason)
-            );
+            let (snapshot, elapsed_seconds, expected_reason, expected_kind) = case;
+            let reason = tun_watchdog_recovery_reason(&snapshot, elapsed_seconds).unwrap();
+            assert!(reason.message.contains(expected_reason));
+            assert_eq!(reason.kind, expected_kind);
         }
+    }
+
+    #[test]
+    fn tun_watchdog_network_gate_is_limited_to_auto_route_recovery() {
+        let reason = TunWatchdogRecoveryReason {
+            kind: TunWatchdogRecoveryKind::SleepWake,
+            message: "runtime timer gap after sleep/wake (180s)".to_string(),
+        };
+        assert!(should_gate_tun_watchdog_recovery_on_network(
+            &test_tun_snapshot(
+                true,
+                true,
+                true,
+                TunRuntimeStatus::Running,
+                Some("en0"),
+                Some("en0"),
+            ),
+            &reason,
+        ));
+        assert!(!should_gate_tun_watchdog_recovery_on_network(
+            &test_tun_snapshot(
+                true,
+                true,
+                false,
+                TunRuntimeStatus::Running,
+                Some("en0"),
+                Some("en0"),
+            ),
+            &reason,
+        ));
+
+        let reason = TunWatchdogRecoveryReason {
+            kind: TunWatchdogRecoveryKind::Status,
+            message: "TUN enabled but runtime status is Failed".to_string(),
+        };
+        assert!(!should_gate_tun_watchdog_recovery_on_network(
+            &test_tun_snapshot(
+                true,
+                true,
+                true,
+                TunRuntimeStatus::Failed,
+                Some("en0"),
+                Some("en0"),
+            ),
+            &reason,
+        ));
     }
 
     #[test]
@@ -915,6 +1143,18 @@ mod tests {
         ));
 
         let err = anyhow::anyhow!("failed to capture current network interface");
+        assert_eq!(
+            tun_watchdog_recovery_cooldown_for_error(&err),
+            TUN_WATCHDOG_FAST_RECOVERY_COOLDOWN
+        );
+
+        let err = anyhow::anyhow!("network state not ready for TUN recovery after 20s");
+        assert_eq!(
+            tun_watchdog_recovery_cooldown_for_error(&err),
+            TUN_WATCHDOG_FAST_RECOVERY_COOLDOWN
+        );
+
+        let err = anyhow::anyhow!("failed to refresh route rules");
         assert_eq!(
             tun_watchdog_recovery_cooldown_for_error(&err),
             TUN_WATCHDOG_RECOVERY_COOLDOWN

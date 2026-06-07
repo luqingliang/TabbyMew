@@ -198,7 +198,7 @@ pub fn is_process_running(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
-    platform_is_process_running(pid)
+    process_exists(pid)
 }
 
 pub(super) fn process_memory_rss_bytes(pid: u32) -> Option<u64> {
@@ -209,15 +209,23 @@ pub(super) fn process_memory_rss_bytes(pid: u32) -> Option<u64> {
 }
 
 #[cfg(unix)]
-fn platform_is_process_running(pid: u32) -> bool {
-    Command::new("kill")
-        .arg("-0")
-        .arg(pid.to_string())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+fn process_exists(pid: u32) -> bool {
+    let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    if result == 0 {
+        return true;
+    }
+    matches!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::EPERM)
+    )
+}
+
+#[cfg(windows)]
+fn process_exists(pid: u32) -> bool {
+    let pid = Pid::from_u32(pid);
+    let mut system = System::new();
+    system.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+    system.process(pid).is_some()
 }
 
 #[cfg(unix)]
@@ -235,18 +243,6 @@ fn configure_background_process(command: &mut Command) {
             }
         });
     }
-}
-
-#[cfg(windows)]
-fn platform_is_process_running(pid: u32) -> bool {
-    Command::new("tasklist")
-        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
-        .output()
-        .map(|output| {
-            output.status.success()
-                && String::from_utf8_lossy(&output.stdout).contains(&pid.to_string())
-        })
-        .unwrap_or(false)
 }
 
 #[cfg(windows)]
