@@ -23,10 +23,10 @@ pub async fn serve(
         tcp::DEFAULT_MAX_INBOUND_CONNECTIONS,
     );
     loop {
-        let (stream, source) = tcp::accept_with_backoff(&listener, &accept_context).await?;
-        let Some(connection_permit) = limiter.try_acquire() else {
-            continue;
+        let Some(connection_permit) = limiter.acquire().await else {
+            return Ok(());
         };
+        let (stream, source) = tcp::accept_with_backoff(&listener, &accept_context).await?;
         tcp::enable_nodelay(&stream, "hybrid inbound accepted stream");
         let tag = tag.clone();
         let http_auth = http_auth.clone();

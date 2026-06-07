@@ -24,6 +24,13 @@ const RUNTIME_STATE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const TUN_WATCHDOG_INTERVAL: Duration = Duration::from_secs(15);
 const TUN_WATCHDOG_RESUME_GAP: Duration = Duration::from_secs(120);
 const TUN_WATCHDOG_RECOVERY_COOLDOWN: Duration = Duration::from_secs(60);
+const TUN_WATCHDOG_FAST_RECOVERY_COOLDOWN: Duration = TUN_WATCHDOG_INTERVAL;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TunWatchdogRecoveryAttempt {
+    at: u64,
+    cooldown: Duration,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct RunOptions {
@@ -214,7 +221,7 @@ async fn run_tun_watchdog(proxy_runtime: Arc<ProxyRuntime>, shutdown: Arc<Notify
     let mut interval = time::interval(TUN_WATCHDOG_INTERVAL);
     interval.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
     let mut last_tick = unix_now();
-    let mut last_recovery_attempt = None;
+    let mut last_recovery_attempt: Option<TunWatchdogRecoveryAttempt> = None;
     loop {
         tokio::select! {
             _ = shutdown.notified() => {
@@ -230,15 +237,17 @@ async fn run_tun_watchdog(proxy_runtime: Arc<ProxyRuntime>, shutdown: Arc<Notify
                     continue;
                 };
                 if !should_attempt_tun_watchdog_recovery(last_recovery_attempt, now) {
+                    let cooldown = last_recovery_attempt
+                        .map(|attempt| attempt.cooldown)
+                        .unwrap_or(TUN_WATCHDOG_RECOVERY_COOLDOWN);
                     warn!(
                         reason = %reason,
                         elapsed_seconds = elapsed,
-                        cooldown_seconds = TUN_WATCHDOG_RECOVERY_COOLDOWN.as_secs(),
+                        cooldown_seconds = cooldown.as_secs(),
                         "skipped TUN recovery condition during cooldown"
                     );
                     continue;
                 }
-                last_recovery_attempt = Some(now);
 
                 warn!(
                     reason = %reason,
@@ -250,8 +259,19 @@ async fn run_tun_watchdog(proxy_runtime: Arc<ProxyRuntime>, shutdown: Arc<Notify
                     bound_interface = snapshot.tun_bound_interface.as_deref().unwrap_or("-"),
                     "detected TUN recovery condition"
                 );
-                if let Err(err) = proxy_runtime.restart_tun_for_recovery(reason).await {
-                    warn!(elapsed_seconds = elapsed, error = %err, "failed to recover TUN after runtime timer gap");
+                let recovery = proxy_runtime.restart_tun_for_recovery(reason).await;
+                let cooldown = match recovery.as_ref() {
+                    Ok(_) => TUN_WATCHDOG_RECOVERY_COOLDOWN,
+                    Err(err) => tun_watchdog_recovery_cooldown_for_error(err),
+                };
+                last_recovery_attempt = Some(TunWatchdogRecoveryAttempt { at: now, cooldown });
+                if let Err(err) = recovery {
+                    warn!(
+                        elapsed_seconds = elapsed,
+                        retry_cooldown_seconds = cooldown.as_secs(),
+                        error = %err,
+                        "failed to recover TUN after runtime timer gap"
+                    );
                 }
             }
         }
@@ -302,10 +322,30 @@ fn should_restart_tun_after_watchdog_gap(elapsed_seconds: u64) -> bool {
     elapsed_seconds >= TUN_WATCHDOG_RESUME_GAP.as_secs()
 }
 
-fn should_attempt_tun_watchdog_recovery(last_attempt: Option<u64>, now: u64) -> bool {
+fn should_attempt_tun_watchdog_recovery(
+    last_attempt: Option<TunWatchdogRecoveryAttempt>,
+    now: u64,
+) -> bool {
     last_attempt.is_none_or(|last_attempt| {
-        now.saturating_sub(last_attempt) >= TUN_WATCHDOG_RECOVERY_COOLDOWN.as_secs()
+        now.saturating_sub(last_attempt.at) >= last_attempt.cooldown.as_secs()
     })
+}
+
+fn tun_watchdog_recovery_cooldown_for_error(err: &anyhow::Error) -> Duration {
+    if is_fd_exhaustion_error_message(&format!("{err:#}")) {
+        TUN_WATCHDOG_FAST_RECOVERY_COOLDOWN
+    } else {
+        TUN_WATCHDOG_RECOVERY_COOLDOWN
+    }
+}
+
+fn is_fd_exhaustion_error_message(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("too many open files")
+        || message.contains("os error 24")
+        || message.contains("os error 23")
+        || message.contains("emfile")
+        || message.contains("enfile")
 }
 
 async fn run_runtime_state_heartbeat(options: RunOptions, shutdown: Arc<Notify>) {
@@ -431,14 +471,53 @@ fn clear_managed_system_proxy_preference(options: &RunOptions) {
 
 fn raise_runtime_resource_limits() {
     match resource_limits::raise_nofile_soft_limit(resource_limits::DEFAULT_NOFILE_SOFT_LIMIT) {
-        Ok(Some(limit)) => info!(
-            previous_soft = %limit.previous_soft,
-            soft = %limit.soft,
-            hard = %limit.hard,
-            "raised file descriptor limit"
-        ),
-        Ok(None) => {}
-        Err(err) => warn!(error = %err, "failed to raise file descriptor limit"),
+        Ok(Some(limit)) => {
+            let snapshot = resource_limits::nofile_limit_snapshot().ok();
+            info!(
+                previous_soft = %limit.previous_soft,
+                soft = snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.soft.as_str())
+                    .unwrap_or(limit.soft.as_str()),
+                hard = snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.hard.as_str())
+                    .unwrap_or(limit.hard.as_str()),
+                open_files = ?snapshot.as_ref().and_then(|snapshot| snapshot.open_files),
+                "raised file descriptor limit"
+            );
+        }
+        Ok(None) => {
+            let snapshot = resource_limits::nofile_limit_snapshot().ok();
+            info!(
+                soft = snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.soft.as_str())
+                    .unwrap_or("-"),
+                hard = snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.hard.as_str())
+                    .unwrap_or("-"),
+                open_files = ?snapshot.as_ref().and_then(|snapshot| snapshot.open_files),
+                "file descriptor limit ready"
+            );
+        }
+        Err(err) => {
+            let snapshot = resource_limits::nofile_limit_snapshot().ok();
+            warn!(
+                error = %err,
+                soft = snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.soft.as_str())
+                    .unwrap_or("-"),
+                hard = snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.hard.as_str())
+                    .unwrap_or("-"),
+                open_files = ?snapshot.as_ref().and_then(|snapshot| snapshot.open_files),
+                "failed to raise file descriptor limit"
+            );
+        }
     }
 }
 
@@ -802,8 +881,44 @@ mod tests {
     #[test]
     fn tun_watchdog_recovery_attempts_are_rate_limited() {
         assert!(should_attempt_tun_watchdog_recovery(None, 100));
-        assert!(!should_attempt_tun_watchdog_recovery(Some(100), 130));
-        assert!(should_attempt_tun_watchdog_recovery(Some(100), 160));
+        assert!(!should_attempt_tun_watchdog_recovery(
+            Some(TunWatchdogRecoveryAttempt {
+                at: 100,
+                cooldown: TUN_WATCHDOG_RECOVERY_COOLDOWN,
+            }),
+            130,
+        ));
+        assert!(should_attempt_tun_watchdog_recovery(
+            Some(TunWatchdogRecoveryAttempt {
+                at: 100,
+                cooldown: TUN_WATCHDOG_RECOVERY_COOLDOWN,
+            }),
+            160,
+        ));
+    }
+
+    #[test]
+    fn tun_watchdog_fd_exhaustion_uses_fast_retry_cooldown() {
+        let err = anyhow::anyhow!(
+            "failed to start TUN listeners: tun2proxy failed: Too many open files (os error 24)"
+        );
+        assert_eq!(
+            tun_watchdog_recovery_cooldown_for_error(&err),
+            TUN_WATCHDOG_FAST_RECOVERY_COOLDOWN
+        );
+        assert!(should_attempt_tun_watchdog_recovery(
+            Some(TunWatchdogRecoveryAttempt {
+                at: 100,
+                cooldown: TUN_WATCHDOG_FAST_RECOVERY_COOLDOWN,
+            }),
+            115,
+        ));
+
+        let err = anyhow::anyhow!("failed to capture current network interface");
+        assert_eq!(
+            tun_watchdog_recovery_cooldown_for_error(&err),
+            TUN_WATCHDOG_RECOVERY_COOLDOWN
+        );
     }
 
     fn test_tun_snapshot(

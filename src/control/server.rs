@@ -47,10 +47,10 @@ pub async fn serve_listener(listener: TcpListener, state: ControlState) -> Resul
         tcp::DEFAULT_MAX_INBOUND_CONNECTIONS,
     );
     loop {
-        let (stream, source) = tcp::accept_with_backoff(&listener, &accept_context).await?;
-        let Some(connection_permit) = limiter.try_acquire() else {
-            continue;
+        let Some(connection_permit) = limiter.acquire().await else {
+            return Ok(());
         };
+        let (stream, source) = tcp::accept_with_backoff(&listener, &accept_context).await?;
         let state = state.clone();
         tokio::spawn(async move {
             let _connection_permit = connection_permit;

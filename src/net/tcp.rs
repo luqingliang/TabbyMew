@@ -1,8 +1,9 @@
 use std::{io, net::SocketAddr, sync::Arc, time::Duration};
 
 use tokio::{
+    io::{AsyncRead, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError},
+    sync::{OwnedSemaphorePermit, Semaphore},
     time::sleep,
 };
 use tracing::{debug, warn};
@@ -64,20 +65,34 @@ impl ConnectionLimiter {
         }
     }
 
-    pub fn try_acquire(&self) -> Option<OwnedSemaphorePermit> {
-        match self.semaphore.clone().try_acquire_owned() {
-            Ok(permit) => Some(permit),
-            Err(TryAcquireError::NoPermits) => {
-                warn!(
-                    context = %self.context,
-                    max = self.max,
-                    "inbound connection limit reached; closing accepted stream"
-                );
-                None
-            }
-            Err(TryAcquireError::Closed) => None,
+    pub async fn acquire(&self) -> Option<OwnedSemaphorePermit> {
+        if self.semaphore.available_permits() == 0 {
+            warn!(
+                context = %self.context,
+                max = self.max,
+                "inbound connection limit reached; applying accept backpressure"
+            );
         }
+        self.semaphore.clone().acquire_owned().await.ok()
     }
+}
+
+pub async fn relay_until_first_eof<L, R>(left: &mut L, right: &mut R) -> io::Result<()>
+where
+    L: AsyncRead + AsyncWrite + Unpin,
+    R: AsyncRead + AsyncWrite + Unpin,
+{
+    let result = {
+        let (mut left_read, mut left_write) = tokio::io::split(&mut *left);
+        let (mut right_read, mut right_write) = tokio::io::split(&mut *right);
+        tokio::select! {
+            result = tokio::io::copy(&mut left_read, &mut right_write) => result.map(|_| ()),
+            result = tokio::io::copy(&mut right_read, &mut left_write) => result.map(|_| ()),
+        }
+    };
+    let _ = left.shutdown().await;
+    let _ = right.shutdown().await;
+    result
 }
 
 fn is_retriable_accept_error(err: &io::Error) -> bool {

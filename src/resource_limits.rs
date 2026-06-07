@@ -9,6 +9,13 @@ pub struct NofileLimitChange {
     pub hard: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NofileLimitSnapshot {
+    pub soft: String,
+    pub hard: String,
+    pub open_files: Option<usize>,
+}
+
 #[cfg(unix)]
 pub fn raise_nofile_soft_limit(target: u64) -> Result<Option<NofileLimitChange>> {
     let mut limit = libc::rlimit {
@@ -38,6 +45,46 @@ pub fn raise_nofile_soft_limit(target: u64) -> Result<Option<NofileLimitChange>>
 #[cfg(not(unix))]
 pub fn raise_nofile_soft_limit(_target: u64) -> Result<Option<NofileLimitChange>> {
     Ok(None)
+}
+
+#[cfg(unix)]
+pub fn nofile_limit_snapshot() -> Result<NofileLimitSnapshot> {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+
+    Ok(NofileLimitSnapshot {
+        soft: format_rlimit(limit.rlim_cur),
+        hard: format_rlimit(limit.rlim_max),
+        open_files: open_fd_count(),
+    })
+}
+
+#[cfg(not(unix))]
+pub fn nofile_limit_snapshot() -> Result<NofileLimitSnapshot> {
+    Ok(NofileLimitSnapshot {
+        soft: "unsupported".to_string(),
+        hard: "unsupported".to_string(),
+        open_files: None,
+    })
+}
+
+#[cfg(unix)]
+pub fn open_fd_count() -> Option<usize> {
+    ["/proc/self/fd", "/dev/fd"].into_iter().find_map(|path| {
+        std::fs::read_dir(path)
+            .ok()
+            .map(|entries| entries.filter_map(|entry| entry.ok()).count())
+    })
+}
+
+#[cfg(not(unix))]
+pub fn open_fd_count() -> Option<usize> {
+    None
 }
 
 #[cfg(unix)]
@@ -90,5 +137,13 @@ mod tests {
                 "current={current}, hard={hard}, target={target}"
             );
         }
+    }
+
+    #[test]
+    fn snapshots_nofile_limit() -> Result<()> {
+        let snapshot = nofile_limit_snapshot()?;
+        assert!(!snapshot.soft.is_empty());
+        assert!(!snapshot.hard.is_empty());
+        Ok(())
     }
 }

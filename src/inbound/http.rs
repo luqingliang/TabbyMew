@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use std::collections::HashSet;
 use tokio::{
-    io::{self, AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
 use tracing::{debug, info, warn};
@@ -47,10 +47,10 @@ pub async fn serve(
         tcp::DEFAULT_MAX_INBOUND_CONNECTIONS,
     );
     loop {
-        let (stream, source) = tcp::accept_with_backoff(&listener, &accept_context).await?;
-        let Some(connection_permit) = limiter.try_acquire() else {
-            continue;
+        let Some(connection_permit) = limiter.acquire().await else {
+            return Ok(());
         };
+        let (stream, source) = tcp::accept_with_backoff(&listener, &accept_context).await?;
         tcp::enable_nodelay(&stream, "HTTP inbound accepted stream");
         let tag = tag.clone();
         let auth = auth.clone();
@@ -139,7 +139,7 @@ pub async fn handle_tcp(
             outbound = %outbound.tag(),
             "HTTP CONNECT established"
         );
-        let _ = io::copy_bidirectional(&mut inbound, &mut outbound_stream).await;
+        let _ = tcp::relay_until_first_eof(&mut inbound, &mut outbound_stream).await;
         return Ok(());
     }
 
@@ -187,7 +187,7 @@ pub async fn handle_tcp(
         outbound = %outbound.tag(),
         "plain HTTP proxy established"
     );
-    let _ = io::copy_bidirectional(&mut inbound, &mut outbound_stream).await;
+    let _ = tcp::relay_until_first_eof(&mut inbound, &mut outbound_stream).await;
     Ok(())
 }
 

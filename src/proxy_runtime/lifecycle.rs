@@ -8,6 +8,7 @@ use tracing::{debug, info, warn};
 use crate::{
     config::{InboundConfig, OutboundConfig},
     inbound::{self, tun},
+    resource_limits,
     router::Router,
 };
 
@@ -179,6 +180,7 @@ impl ProxyRuntime {
                 Ok(snapshot)
             }
             Err(err) => {
+                let fd_snapshot = resource_limits::nofile_limit_snapshot().ok();
                 {
                     let mut inner = self.tun_inner.lock().await;
                     inner.desired_enabled = true;
@@ -186,7 +188,20 @@ impl ProxyRuntime {
                     inner.last_watchdog_reason = Some(reason.clone());
                     inner.last_error = Some(format!("TUN recovery failed after {reason}: {err:#}"));
                 }
-                warn!(reason = %reason, error = %err, "TUN runtime recovery failed");
+                warn!(
+                    reason = %reason,
+                    error = %err,
+                    fd_soft_limit = fd_snapshot
+                        .as_ref()
+                        .map(|snapshot| snapshot.soft.as_str())
+                        .unwrap_or("-"),
+                    fd_hard_limit = fd_snapshot
+                        .as_ref()
+                        .map(|snapshot| snapshot.hard.as_str())
+                        .unwrap_or("-"),
+                    fd_open_count = ?fd_snapshot.as_ref().and_then(|snapshot| snapshot.open_files),
+                    "TUN runtime recovery failed"
+                );
                 Err(err)
             }
         }
@@ -300,6 +315,7 @@ impl ProxyRuntime {
             }
             let tun_config = self.tun_config_summary();
             let effective_bypass_count = tun_bypass_entry_count(&tun_inbounds);
+            let fd_snapshot = resource_limits::nofile_limit_snapshot().ok();
             info!(
                 inbounds = self.tun_inbounds.len(),
                 auto_route = tun_config.auto_route,
@@ -310,6 +326,15 @@ impl ProxyRuntime {
                 effective_bypass_count,
                 proxy_bypass_sources = self.tun_bypass_sources.len(),
                 warning_count = inner.last_warnings.len(),
+                fd_soft_limit = fd_snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.soft.as_str())
+                    .unwrap_or("-"),
+                fd_hard_limit = fd_snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.hard.as_str())
+                    .unwrap_or("-"),
+                fd_open_count = ?fd_snapshot.as_ref().and_then(|snapshot| snapshot.open_files),
                 "starting TUN listeners"
             );
             for warning in &inner.last_warnings {
@@ -366,7 +391,19 @@ impl ProxyRuntime {
             inner.desired_enabled = false;
             inner.last_error = None;
             inner.last_warnings = Vec::new();
-            debug!("TUN listeners stopped");
+            let fd_snapshot = resource_limits::nofile_limit_snapshot().ok();
+            debug!(
+                fd_soft_limit = fd_snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.soft.as_str())
+                    .unwrap_or("-"),
+                fd_hard_limit = fd_snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.hard.as_str())
+                    .unwrap_or("-"),
+                fd_open_count = ?fd_snapshot.as_ref().and_then(|snapshot| snapshot.open_files),
+                "TUN listeners stopped"
+            );
         }
         Ok(self.snapshot().await)
     }

@@ -21,7 +21,7 @@ use tokio::{
     sync::{mpsc, oneshot, watch},
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     net::{
         TcpListener, TcpStream,
         tcp::{OwnedReadHalf, OwnedWriteHalf},
@@ -36,7 +36,9 @@ use tun2proxy::{Args as Tun2ProxyArgs, CancellationToken};
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::fs_security;
-use crate::{config::TunDnsMode, inbound::socks, platform, router::Router};
+use crate::{
+    config::TunDnsMode, inbound::socks, net::tcp, platform, resource_limits, router::Router,
+};
 
 pub struct TunInboundOptions {
     pub tag: String,
@@ -77,10 +79,13 @@ pub async fn serve(options: TunInboundOptions) -> Result<()> {
     let args = parse_tun2proxy_args(argv.clone())?;
     let shutdown = CancellationToken::new();
     let mut tasks = JoinSet::new();
-    tasks.spawn(socks::serve_listener(
+    tasks.spawn(socks::serve_listener_with_connection_limit(
         socks_tag,
         socks_listener,
         options.router.clone(),
+        options
+            .max_sessions
+            .unwrap_or(tcp::DEFAULT_MAX_INBOUND_CONNECTIONS),
     ));
     tasks.spawn(run_tun2proxy_for_current_context(
         args,
@@ -331,6 +336,7 @@ pub async fn run_privileged_helper_command(command: PrivilegedTunHelperCommand) 
     if current_privilege_verified() == Some(false) {
         bail!("privileged TUN helper must run as administrator/root");
     }
+    let startup_limit = privileged_helper_resource_limit_output("privileged TUN helper started");
 
     let token = fs::read_to_string(&command.token_file).with_context(|| {
         format!(
@@ -349,6 +355,7 @@ pub async fn run_privileged_helper_command(command: PrivilegedTunHelperCommand) 
         .write_all(format!("{token}\n").as_bytes())
         .await
         .context("failed to write TUN helper control token")?;
+    write_privileged_helper_output(&mut control, &startup_limit).await?;
 
     run_privileged_helper_command_loop(control).await
 }
@@ -381,6 +388,15 @@ enum PrivilegedTunHelperOutput {
     },
     Event {
         event: PrivilegedTunHelperEvent,
+        error: Option<String>,
+    },
+    ResourceLimit {
+        context: String,
+        soft: String,
+        hard: String,
+        open_files: Option<usize>,
+        changed: bool,
+        previous_soft: Option<String>,
         error: Option<String>,
     },
 }
@@ -484,10 +500,30 @@ async fn handle_privileged_helper_command(
         PrivilegedTunHelperCommandKind::Start {
             mtu,
             tun2proxy_args,
-        } => start_privileged_tun_runner(active, tun2proxy_args, mtu).await,
-        PrivilegedTunHelperCommandKind::Stop => stop_privileged_tun_runner(active).await,
+        } => {
+            write_privileged_helper_output(
+                writer,
+                &privileged_helper_resource_limit_output("privileged TUN runner starting"),
+            )
+            .await?;
+            start_privileged_tun_runner(active, tun2proxy_args, mtu).await
+        }
+        PrivilegedTunHelperCommandKind::Stop => {
+            let result = stop_privileged_tun_runner(active).await;
+            write_privileged_helper_output(
+                writer,
+                &privileged_helper_resource_limit_output("privileged TUN runner stopped"),
+            )
+            .await?;
+            result
+        }
         PrivilegedTunHelperCommandKind::Shutdown => {
             let result = stop_privileged_tun_runner(active).await;
+            write_privileged_helper_output(
+                writer,
+                &privileged_helper_resource_limit_output("privileged TUN helper shutting down"),
+            )
+            .await?;
             write_privileged_helper_response(writer, envelope.id, result).await?;
             return Ok(true);
         }
@@ -534,6 +570,7 @@ async fn stop_privileged_tun_runner(active: &mut Option<PrivilegedTunRunner>) ->
         },
         Err(_) => {
             runner.task.abort();
+            let _ = timeout(Duration::from_secs(1), &mut runner.task).await;
             bail!("timed out waiting for privileged TUN runner shutdown");
         }
     }
@@ -569,10 +606,13 @@ async fn write_privileged_helper_response(
     write_privileged_helper_output(writer, &output).await
 }
 
-async fn write_privileged_helper_output(
-    writer: &mut OwnedWriteHalf,
+async fn write_privileged_helper_output<W>(
+    writer: &mut W,
     output: &PrivilegedTunHelperOutput,
-) -> Result<()> {
+) -> Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
     let mut line =
         serde_json::to_vec(output).context("failed to encode privileged helper output")?;
     line.push(b'\n');
@@ -580,6 +620,43 @@ async fn write_privileged_helper_output(
         .write_all(&line)
         .await
         .context("failed to write privileged helper output")
+}
+
+fn privileged_helper_resource_limit_output(
+    context: impl Into<String>,
+) -> PrivilegedTunHelperOutput {
+    let context = context.into();
+    match resource_limits::raise_nofile_soft_limit(resource_limits::DEFAULT_NOFILE_SOFT_LIMIT) {
+        Ok(change) => match resource_limits::nofile_limit_snapshot() {
+            Ok(snapshot) => PrivilegedTunHelperOutput::ResourceLimit {
+                context,
+                soft: snapshot.soft,
+                hard: snapshot.hard,
+                open_files: snapshot.open_files,
+                changed: change.is_some(),
+                previous_soft: change.map(|change| change.previous_soft),
+                error: None,
+            },
+            Err(err) => PrivilegedTunHelperOutput::ResourceLimit {
+                context,
+                soft: "-".to_string(),
+                hard: "-".to_string(),
+                open_files: None,
+                changed: change.is_some(),
+                previous_soft: change.map(|change| change.previous_soft),
+                error: Some(format!("{err:#}")),
+            },
+        },
+        Err(err) => PrivilegedTunHelperOutput::ResourceLimit {
+            context,
+            soft: "-".to_string(),
+            hard: "-".to_string(),
+            open_files: None,
+            changed: false,
+            previous_soft: None,
+            error: Some(format!("{err:#}")),
+        },
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -997,6 +1074,33 @@ fn handle_privileged_helper_manager_output(
         PrivilegedTunHelperOutput::Event { event, error } => {
             if matches!(event, PrivilegedTunHelperEvent::TunStopped) {
                 let _ = run_exit.send(Some(PrivilegedTunRunExit { error }));
+            }
+            false
+        }
+        PrivilegedTunHelperOutput::ResourceLimit {
+            context,
+            soft,
+            hard,
+            open_files,
+            changed,
+            previous_soft,
+            error,
+        } => {
+            match error {
+                Some(error) => warn!(
+                    context = %context,
+                    error = %error,
+                    "privileged TUN helper resource limit snapshot failed"
+                ),
+                None => info!(
+                    context = %context,
+                    soft = %soft,
+                    hard = %hard,
+                    open_files = ?open_files,
+                    changed,
+                    previous_soft = previous_soft.as_deref().unwrap_or("-"),
+                    "privileged TUN helper resource limit"
+                ),
             }
             false
         }
@@ -1931,6 +2035,23 @@ mod tests {
                 assert_eq!(tun2proxy_args[0], "tun2proxy");
             }
             other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn privileged_helper_resource_limit_output_is_machine_readable() {
+        let output = privileged_helper_resource_limit_output("test resource snapshot");
+        let json = serde_json::to_string(&output).unwrap();
+
+        assert!(json.contains("\"type\":\"resource_limit\""));
+        assert!(json.contains("\"context\":\"test resource snapshot\""));
+
+        let decoded: PrivilegedTunHelperOutput = serde_json::from_str(&json).unwrap();
+        match decoded {
+            PrivilegedTunHelperOutput::ResourceLimit { context, .. } => {
+                assert_eq!(context, "test resource snapshot");
+            }
+            other => panic!("unexpected output: {other:?}"),
         }
     }
 

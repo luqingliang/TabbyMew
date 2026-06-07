@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use tokio::{
-    io::{self, AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream, UdpSocket},
     sync::mpsc,
     task::JoinHandle,
@@ -42,21 +42,33 @@ pub async fn serve(tag: String, listen: String, listen_port: u16, router: Router
 }
 
 pub async fn serve_listener(tag: String, listener: TcpListener, router: Router) -> Result<()> {
+    serve_listener_with_connection_limit(
+        tag,
+        listener,
+        router,
+        tcp::DEFAULT_MAX_INBOUND_CONNECTIONS,
+    )
+    .await
+}
+
+pub async fn serve_listener_with_connection_limit(
+    tag: String,
+    listener: TcpListener,
+    router: Router,
+    max_connections: usize,
+) -> Result<()> {
     let addr = listener
         .local_addr()
         .context("failed to read SOCKS listener address")?;
     debug!(inbound = %tag, listen = %addr, "SOCKS inbound listening");
 
     let accept_context = format!("SOCKS inbound {tag}");
-    let limiter = tcp::ConnectionLimiter::new(
-        format!("SOCKS inbound {tag}"),
-        tcp::DEFAULT_MAX_INBOUND_CONNECTIONS,
-    );
+    let limiter = tcp::ConnectionLimiter::new(format!("SOCKS inbound {tag}"), max_connections);
     loop {
-        let (stream, source) = tcp::accept_with_backoff(&listener, &accept_context).await?;
-        let Some(connection_permit) = limiter.try_acquire() else {
-            continue;
+        let Some(connection_permit) = limiter.acquire().await else {
+            return Ok(());
         };
+        let (stream, source) = tcp::accept_with_backoff(&listener, &accept_context).await?;
         tcp::enable_nodelay(&stream, "SOCKS inbound accepted stream");
         let tag = tag.clone();
         let router = router.clone();
@@ -126,7 +138,7 @@ pub async fn handle_tcp(
         outbound = %outbound.tag(),
         "SOCKS connection established"
     );
-    let _ = io::copy_bidirectional(&mut inbound, &mut outbound_stream).await;
+    let _ = tcp::relay_until_first_eof(&mut inbound, &mut outbound_stream).await;
     Ok(())
 }
 
