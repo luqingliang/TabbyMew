@@ -10,6 +10,18 @@ relisted in release notes.
 
 ## [Unreleased]
 
+## [0.1.22] - 2026-06-07
+
+### Changed
+
+- Improve TUN sleep/wake recovery by waiting for a stable network state before restarting the TUN runtime.
+- Add runtime resource telemetry around TUN recovery to make file descriptor and helper state easier to diagnose.
+
+### Fixed
+
+- Fix TUN recovery resource cleanup so repeated sleep/wake cycles do not leak runtime listeners or helper state.
+- Fix `status --json` service reporting so healthy managed runtimes are not reported as stale.
+
 ## [0.1.21] - 2026-06-05
 
 ### Changed
