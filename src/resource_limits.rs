@@ -82,11 +82,6 @@ pub fn open_fd_count() -> Option<usize> {
     })
 }
 
-#[cfg(not(unix))]
-pub fn open_fd_count() -> Option<usize> {
-    None
-}
-
 #[cfg(unix)]
 fn desired_nofile_soft_limit(
     current: libc::rlim_t,

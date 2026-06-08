@@ -139,9 +139,13 @@ pub(crate) fn draw_tui_dashboard_wide(
         vec![
             ("Proxy", summary.proxy.clone()),
             ("LAN Proxy", summary.lan_proxy.clone()),
-            ("Route Mode", summary.route_mode.clone()),
-            ("Rule Final", summary.final_outbound.clone()),
-            ("Global Target", summary.global_outbound.clone()),
+            (
+                "Routing",
+                format!(
+                    "{} rule={} global={}",
+                    summary.route_mode, summary.final_outbound, summary.global_outbound
+                ),
+            ),
             ("Policy Groups", summary.policy_groups.clone()),
             ("Rules", summary.route_rules.clone()),
             ("DNS", summary.dns.clone()),
