@@ -10,6 +10,20 @@ relisted in release notes.
 
 ## [Unreleased]
 
+## [0.1.23] - 2026-06-08
+
+### Added
+
+- Add proxied upload and download traffic counters to the runtime control API and CLI/TUI status surfaces.
+
+### Changed
+
+- Show proxied traffic in the wide TUI dashboard by merging runtime route final and global target details into one `Routing` row.
+
+### Fixed
+
+- Limit `open_fd_count` to Unix builds so Windows release builds do not warn about an unused non-Unix stub.
+
 ## [0.1.22] - 2026-06-07
 
 ### Changed
