@@ -93,6 +93,75 @@ fn selects_system_proxy_targets_by_protocol() {
 }
 
 #[test]
+fn system_proxy_targets_avoid_authenticated_http_paths() {
+    let authenticated_hybrid = ["hybrid:hybrid-in@127.0.0.1:17890 auth=on".to_string()];
+
+    let auto_target = select_target_with_protocol(&authenticated_hybrid, SystemProxyProtocol::Auto)
+        .expect("authenticated hybrid can still serve SOCKS system proxy traffic");
+    assert_eq!(auto_target.http, None);
+    assert_eq!(auto_target.https, None);
+    assert_eq!(
+        auto_target
+            .socks
+            .as_ref()
+            .map(|endpoint| endpoint.address.as_str()),
+        Some("127.0.0.1:17890")
+    );
+
+    assert!(
+        select_target_with_protocol(&authenticated_hybrid, SystemProxyProtocol::HttpConnect)
+            .is_none()
+    );
+
+    let authenticated_http = ["http:http-in@127.0.0.1:8080 auth=on".to_string()];
+    assert!(select_target(&authenticated_http).is_none());
+
+    let mixed = [
+        "hybrid:hybrid-in@127.0.0.1:17890 auth=on".to_string(),
+        "http:http-in@127.0.0.1:8080 auth=off".to_string(),
+    ];
+    let target = select_target(&mixed).unwrap();
+    assert_eq!(
+        target
+            .http
+            .as_ref()
+            .map(|endpoint| endpoint.address.as_str()),
+        Some("127.0.0.1:8080")
+    );
+    assert_eq!(
+        target
+            .socks
+            .as_ref()
+            .map(|endpoint| endpoint.address.as_str()),
+        Some("127.0.0.1:17890")
+    );
+}
+
+#[test]
+fn system_proxy_targets_rewrite_wildcard_listens_to_loopback() {
+    let target = select_target(&[
+        "http:http-in@0.0.0.0:8080 auth=off".to_string(),
+        "socks:socks-in@[::]:1080".to_string(),
+    ])
+    .unwrap();
+
+    assert_eq!(
+        target
+            .http
+            .as_ref()
+            .map(|endpoint| endpoint.address.as_str()),
+        Some("127.0.0.1:8080")
+    );
+    assert_eq!(
+        target
+            .socks
+            .as_ref()
+            .map(|endpoint| endpoint.address.as_str()),
+        Some("[::1]:1080")
+    );
+}
+
+#[test]
 fn parses_macos_scutil_proxy_state() {
     let state = parse_macos_proxy_state(&macos_scutil_output(
         Some(("127.0.0.1", 7890)),

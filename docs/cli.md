@@ -86,6 +86,12 @@ history after sleep/wake recovery. The TUN watchdog also records whether TUN
 is still desired after an unexpected listener exit, and can recover from
 sleep/wake gaps or outbound egress binding drift.
 
+System proxy targets only use compatible local listeners. HTTP/HTTPS system
+proxy entries avoid inbounds with `auth=on`, because desktop system proxy
+settings do not carry TabbyMew's local Basic auth credentials. Wildcard
+listeners such as `0.0.0.0` or `::` are written to the OS proxy as loopback
+addresses so local apps connect to a reachable proxy endpoint.
+
 ## Login Autostart
 
 TabbyMew never enables autostart by default. The saved switch lives in the

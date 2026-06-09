@@ -15,6 +15,10 @@ relisted in release notes.
 - Add persistent CLI/TUI controls for user-login autostart, disabled by default.
 - Restore saved TUN and system proxy preferences when the background service starts.
 
+### Fixed
+
+- Avoid selecting authenticated HTTP/hybrid inbounds for HTTP/HTTPS system proxy targets and write wildcard listeners as loopback proxy endpoints.
+
 ## [0.1.23] - 2026-06-08
 
 ### Added

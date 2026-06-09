@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::platform;
 
-const NO_LOCAL_SYSTEM_PROXY_TARGET: &str = "no local HTTP, SOCKS, or hybrid inbound is configured";
+const NO_LOCAL_SYSTEM_PROXY_TARGET: &str =
+    "no compatible local HTTP, SOCKS, or hybrid inbound is configured";
 
 #[cfg(any(target_os = "macos", test))]
 const MACOS_SCUTIL: &str = "/usr/sbin/scutil";

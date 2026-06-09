@@ -99,10 +99,8 @@ mod tests {
         assert_eq!(status["process"]["can_read_logs"], true);
         assert!(status["system_proxy"]["platform"].as_str().is_some());
         assert!(status["system_proxy"]["supported"].as_bool().is_some());
-        assert_eq!(
-            status["system_proxy"]["target"]["http"]["address"],
-            "127.0.0.1:7890"
-        );
+        assert!(status["system_proxy"]["target"]["http"].is_null());
+        assert!(status["system_proxy"]["target"]["https"].is_null());
         assert_eq!(
             status["system_proxy"]["target"]["socks"]["address"],
             "127.0.0.1:7890"
@@ -110,7 +108,11 @@ mod tests {
 
         let system_proxy = request_json(addr, "/control/api/system-proxy").await?;
         assert!(system_proxy["supported"].as_bool().is_some());
-        assert_eq!(system_proxy["target"]["http"]["address"], "127.0.0.1:7890");
+        assert!(system_proxy["target"]["http"].is_null());
+        assert_eq!(
+            system_proxy["target"]["socks"]["address"],
+            "127.0.0.1:7890"
+        );
 
         let logs = request_json(addr, "/control/api/logs?lines=1").await?;
         assert_eq!(logs["available"], true);

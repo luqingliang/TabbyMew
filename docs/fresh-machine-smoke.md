@@ -53,8 +53,8 @@ test servers in committed notes.
 - Confirm `TabbyMew.exe --help` runs from PowerShell.
 - Run the background service lifecycle commands from a normal user PowerShell.
 - Enable System Proxy from CLI or TUI, confirm Windows proxy state points at the
-  local TabbyMew listener, then disable it and confirm previous unmanaged proxy
-  settings were not modified.
+  local TabbyMew listener using a loopback address, then disable it and confirm
+  previous unmanaged proxy settings were not modified.
 - If testing TUN, run from an elevated session and confirm permission errors are
   explicit when privileges are missing.
 - Stop TabbyMew and confirm no TabbyMew-owned proxy, DNS, route, or TUN state

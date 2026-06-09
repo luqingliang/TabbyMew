@@ -133,7 +133,7 @@ pub fn select_target_with_protocol(
 
     if let Some(endpoint) = endpoints
         .iter()
-        .find(|endpoint| endpoint.protocol == InboundProtocol::Hybrid)
+        .find(|endpoint| endpoint.protocol == InboundProtocol::Hybrid && !endpoint.authenticated)
     {
         let http = matches!(
             protocol,
@@ -155,10 +155,10 @@ pub fn select_target_with_protocol(
 
     let http = endpoints
         .iter()
-        .find(|endpoint| endpoint.protocol == InboundProtocol::Http);
+        .find(|endpoint| endpoint.supports_http_system_proxy());
     let socks = endpoints
         .iter()
-        .find(|endpoint| endpoint.protocol == InboundProtocol::Socks);
+        .find(|endpoint| endpoint.supports_socks_system_proxy());
 
     match protocol {
         SystemProxyProtocol::Socks => {
@@ -204,6 +204,7 @@ pub fn select_target_with_protocol(
 pub(super) struct ParsedInboundEndpoint {
     protocol: InboundProtocol,
     source: String,
+    authenticated: bool,
     endpoint: SystemProxyEndpoint,
 }
 
@@ -225,9 +226,11 @@ pub(super) fn parse_inbound_summary(summary: &str) -> Option<ParsedInboundEndpoi
     let (_, after_tag) = rest.split_once('@')?;
     let address = after_tag.split_whitespace().next()?;
     let endpoint = parse_endpoint(address)?;
+    let authenticated = has_enabled_auth(after_tag);
     Some(ParsedInboundEndpoint {
         protocol,
         source: summary.to_string(),
+        authenticated,
         endpoint,
     })
 }
@@ -242,11 +245,42 @@ pub(super) fn parse_endpoint(address: &str) -> Option<SystemProxyEndpoint> {
         let (host, port) = address.rsplit_once(':')?;
         (host.to_string(), port.parse::<u16>().ok()?)
     };
+    let host = system_proxy_host(&host);
     Some(SystemProxyEndpoint {
         address: format_endpoint(&host, port),
         host,
         port,
     })
+}
+
+impl ParsedInboundEndpoint {
+    fn supports_http_system_proxy(&self) -> bool {
+        matches!(
+            self.protocol,
+            InboundProtocol::Hybrid | InboundProtocol::Http
+        ) && !self.authenticated
+    }
+
+    fn supports_socks_system_proxy(&self) -> bool {
+        matches!(
+            self.protocol,
+            InboundProtocol::Hybrid | InboundProtocol::Socks
+        )
+    }
+}
+
+fn has_enabled_auth(summary_tail: &str) -> bool {
+    summary_tail
+        .split_whitespace()
+        .any(|part| part.eq_ignore_ascii_case("auth=on"))
+}
+
+fn system_proxy_host(host: &str) -> String {
+    match host {
+        "0.0.0.0" => "127.0.0.1".to_string(),
+        "::" => "::1".to_string(),
+        _ => host.to_string(),
+    }
 }
 
 pub(super) fn format_endpoint(host: &str, port: u16) -> String {
