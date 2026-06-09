@@ -42,6 +42,11 @@ pub(crate) fn draw_tui_dashboard(frame: &mut Frame<'_>, app: &TuiApp) {
                     Style::default().fg(Color::Yellow)
                 },
             ),
+            Span::raw("  "),
+            Span::styled(
+                app.autostart.label.clone(),
+                tui_autostart_style(app.autostart.tone),
+            ),
         ]),
         Line::from(tui_dashboard_state_line(app)),
     ])
@@ -93,6 +98,14 @@ pub(crate) fn tui_dashboard_state_line(app: &TuiApp) -> String {
         app.session.state_dir.display(),
         env!("CARGO_PKG_VERSION")
     )
+}
+
+pub(crate) fn tui_autostart_style(tone: TuiAutostartTone) -> Style {
+    match tone {
+        TuiAutostartTone::Good => Style::default().fg(Color::Green),
+        TuiAutostartTone::Muted => Style::default().fg(Color::DarkGray),
+        TuiAutostartTone::Warning => Style::default().fg(Color::Yellow),
+    }
 }
 
 pub(crate) fn draw_tui_dashboard_wide(

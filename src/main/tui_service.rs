@@ -548,6 +548,42 @@ pub(crate) async fn tui_remove_subscription_from_tui(
     Ok(format!("subscription {name} removed"))
 }
 
+pub(crate) fn parse_tui_autostart_action(args: &str) -> Result<crate::autostart::AutostartAction> {
+    crate::autostart::parse_action(Some(args), crate::autostart::AutostartAction::Toggle)
+}
+
+pub(crate) fn tui_autostart_command(
+    session: &ShellSession,
+    action: crate::autostart::AutostartAction,
+) -> Result<String> {
+    let state_dir = crate::autostart::absolute_path(&session.state_dir)?;
+    let config = if crate::autostart::action_needs_config(action, &state_dir)? {
+        Some(tui_resolve_autostart_config(session, &state_dir)?)
+    } else {
+        None
+    };
+    let executable = crate::autostart::absolute_path(
+        &std::env::current_exe().context("failed to resolve current executable")?,
+    )?;
+    let report = crate::autostart::apply(
+        action,
+        crate::autostart::AutostartOptions {
+            state_dir,
+            config,
+            executable,
+        },
+    )?;
+    Ok(crate::autostart::format_report(&report))
+}
+
+fn tui_resolve_autostart_config(session: &ShellSession, state_dir: &Path) -> Result<PathBuf> {
+    let config_path = resolve_launch_config_path(session.config.as_ref(), state_dir)?;
+    let config = Config::load(&config_path)?;
+    validate_runtime_config(&config, config_base_dir(&config_path))?;
+    fs::canonicalize(&config_path)
+        .with_context(|| format!("failed to canonicalize config {}", config_path.display()))
+}
+
 pub(crate) async fn tui_add_subscription_from_form(app: &mut TuiApp) -> Result<String> {
     let name = app.subscription_add_name.trim();
     let source = app.subscription_add_url.trim();
@@ -805,6 +841,27 @@ pub(crate) fn shell_command_registry() -> &'static [ShellCommandSpec] {
             summary: "Disable system proxy for the running service.",
         },
         ShellCommandSpec {
+            name: "autostart",
+            aliases: &["startup", "login-start", "autostart-toggle"],
+            category: "service",
+            usage: "/autostart [status|on|off|toggle]",
+            summary: "Show or switch login autostart.",
+        },
+        ShellCommandSpec {
+            name: "autostart-on",
+            aliases: &["startup-on", "autostart-start"],
+            category: "service",
+            usage: "/autostart-on",
+            summary: "Enable login autostart.",
+        },
+        ShellCommandSpec {
+            name: "autostart-off",
+            aliases: &["startup-off", "autostart-stop"],
+            category: "service",
+            usage: "/autostart-off",
+            summary: "Disable login autostart.",
+        },
+        ShellCommandSpec {
             name: "cleanup",
             aliases: &["clean"],
             category: "service",
@@ -986,5 +1043,7 @@ pub(crate) fn shell_command_visible(command: &ShellCommandSpec) -> bool {
             | "lan-proxy-off"
             | "system-proxy-on"
             | "system-proxy-off"
+            | "autostart-on"
+            | "autostart-off"
     )
 }

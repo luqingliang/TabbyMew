@@ -40,6 +40,7 @@ fn test_tui_app() -> TuiApp {
         mode: TuiMode::Dashboard,
         status,
         control_snapshot: None,
+        autostart: TuiAutostartSummary::default(),
         command_query: String::new(),
         selected_command: 0,
         route_mode_selection: 0,

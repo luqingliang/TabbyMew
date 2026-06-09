@@ -48,18 +48,15 @@ fn system_proxy_switch_response(
             persist_system_proxy_protocol(state, protocol);
         }
         let recorded_target = load_managed_system_proxy_target(state);
-        let mut target_recorded = recorded_target.is_some();
         let target = recorded_target.or_else(|| {
             system_proxy::target_from_inbounds_with_protocol(&active.summary.inbounds, protocol)
         });
         let status = system_proxy::disable_target_without_prompt(target.as_ref())?;
-        if !status.matches_target {
-            clear_managed_system_proxy_target(state);
-            target_recorded = false;
-        }
+        persist_system_proxy_enabled_preference(state, false);
+        clear_managed_system_proxy_target(state);
         Ok(status
             .with_protocol(protocol)
-            .with_target_recorded(target_recorded))
+            .with_target_recorded(false))
     }
 }
 
@@ -68,6 +65,20 @@ async fn apply_system_proxy_after_config_change(
     new_active: &ActiveConfig,
 ) -> Result<()> {
     let Some(old_target) = load_managed_system_proxy_target(state) else {
+        if !load_system_proxy_enabled_preference(state) {
+            return Ok(());
+        }
+        let protocol = load_system_proxy_protocol(state);
+        let Some(new_target) =
+            system_proxy::target_from_inbounds_with_protocol(&new_active.summary.inbounds, protocol)
+        else {
+            return Ok(());
+        };
+        let status =
+            system_proxy::switch_target(Some(&new_target), system_proxy::SystemProxySwitch::Enable)?;
+        if status.matches_target {
+            persist_managed_system_proxy_target(state, &new_target);
+        }
         return Ok(());
     };
     if !system_proxy::status_for_target(Some(&old_target)).managed {
@@ -105,7 +116,9 @@ async fn tun_switch_response(state: &ControlState, body: &[u8]) -> Result<ProxyR
         .proxy_runtime
         .as_ref()
         .context("proxy runtime is not available")?;
-    runtime.set_tun_enabled(request.enabled).await
+    let snapshot = runtime.set_tun_enabled(request.enabled).await?;
+    persist_tun_preference(state, snapshot.tun_enabled);
+    Ok(snapshot)
 }
 
 async fn lan_proxy_switch_response(state: &ControlState, body: &[u8]) -> Result<LanProxyResponse> {

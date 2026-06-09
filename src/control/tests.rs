@@ -925,7 +925,46 @@ mod tests {
         let preferences = crate::process_manager::load_preferences(
             crate::process_manager::preferences_path(&dir),
         )?;
+        assert!(preferences.system_proxy_enabled);
         assert_eq!(preferences.system_proxy_target, Some(target));
+
+        let _ = std::fs::remove_dir_all(dir);
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_restore_switches_are_persisted() -> Result<()> {
+        let dir = std::env::temp_dir().join(format!(
+            "tabbymew-control-restore-switch-test-{}-{}",
+            std::process::id(),
+            csrf_token()
+        ));
+        let control_api = ControlApiState {
+            state_file: Some(dir.join("tabbymew-state.json")),
+            ..ControlApiState::default()
+        };
+        let state = ControlState::with_control_api(
+            summary(),
+            Arc::new(RuntimeMetrics::new()),
+            control_api,
+            Arc::new(Notify::new()),
+        );
+
+        persist_tun_preference(&state, true);
+        persist_system_proxy_enabled_preference(&state, true);
+        let preferences = crate::process_manager::load_preferences(
+            crate::process_manager::preferences_path(&dir),
+        )?;
+        assert!(preferences.tun_enabled);
+        assert!(preferences.system_proxy_enabled);
+
+        persist_tun_preference(&state, false);
+        persist_system_proxy_enabled_preference(&state, false);
+        let preferences = crate::process_manager::load_preferences(
+            crate::process_manager::preferences_path(&dir),
+        )?;
+        assert!(!preferences.tun_enabled);
+        assert!(!preferences.system_proxy_enabled);
 
         let _ = std::fs::remove_dir_all(dir);
         Ok(())

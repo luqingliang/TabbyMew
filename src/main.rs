@@ -1,4 +1,5 @@
 mod app;
+mod autostart;
 mod config;
 mod config_normalize;
 mod control;
@@ -130,6 +131,7 @@ async fn main() -> Result<()> {
         Command::Groups(command) => run_groups_command(config.as_ref(), command).await,
         Command::Tun(command) => run_tun_command(config.as_ref(), command).await,
         Command::SystemProxy(command) => run_system_proxy_command(config.as_ref(), command).await,
+        Command::Autostart(command) => run_autostart_command(config.as_ref(), command),
         Command::Api(command) => match command.command {
             ApiSubcommand::Get(command) => {
                 let config_path = resolve_config_path(config.as_ref())?;

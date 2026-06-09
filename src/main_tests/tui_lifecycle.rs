@@ -193,7 +193,30 @@ fn tui_dashboard_state_line_shows_version_instead_of_refresh_age() {
 
     assert!(line.contains("version: "));
     assert!(line.contains(env!("CARGO_PKG_VERSION")));
+    assert_eq!(app.autostart.label, "autostart: off");
     assert!(!line.contains("refreshed:"));
+}
+
+#[test]
+fn tui_autostart_summary_reads_saved_switch() -> Result<()> {
+    let dir = env::temp_dir().join(format!(
+        "tabbymew-tui-autostart-summary-test-{}",
+        std::process::id()
+    ));
+    process_manager::save_preferences(
+        process_manager::preferences_path(&dir),
+        &process_manager::RuntimePreferences {
+            autostart_enabled: true,
+            ..process_manager::RuntimePreferences::default()
+        },
+    )?;
+
+    let summary = tui_autostart_summary(&dir);
+    assert!(summary.label.starts_with("autostart: on"));
+    assert_ne!(summary.tone, TuiAutostartTone::Muted);
+
+    fs::remove_dir_all(dir)?;
+    Ok(())
 }
 
 #[test]

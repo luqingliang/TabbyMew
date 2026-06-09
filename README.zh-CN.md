@@ -60,6 +60,7 @@ TabbyMew 关注这些特性：
 | Start interactive app | `cargo run --locked` |
 | Start background service | `cargo run --locked -- start` |
 | Stop background service | `cargo run --locked -- stop` |
+| Toggle login autostart | `cargo run --locked -- autostart on` |
 | Machine status | `cargo run --locked -- status --json` |
 | Full diagnostics | `cargo run --locked -- doctor --json` |
 | Native config schema | `cargo run --locked -- config schema` |
@@ -122,6 +123,8 @@ cargo run --locked -- system-proxy status --json
 cargo run --locked -- system-proxy on --json
 cargo run --locked -- tun status --json
 cargo run --locked -- tun on --json
+cargo run --locked -- autostart status --json
+cargo run --locked -- autostart on --json
 
 # rules and subscriptions
 cargo run --locked -- rules list --json
@@ -144,6 +147,7 @@ cargo run --locked -- cleanup --json
 /subscriptions
 /tun
 /system-proxy
+/autostart
 /doctor
 /restart
 ```

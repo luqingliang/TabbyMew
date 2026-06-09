@@ -111,7 +111,7 @@ pub async fn run(
         router.clone(),
         &config.outbounds,
     ));
-    apply_saved_proxy_preferences(&options, &proxy_runtime).await;
+    apply_saved_lan_proxy_preference(&options, &proxy_runtime).await;
     let subscription_runtime = SubscriptionRuntime::new(&options.state_dir);
     let mut tasks = JoinSet::new();
 
@@ -137,6 +137,8 @@ pub async fn run(
     if proxy_snapshot.configured_inbounds > 0 {
         proxy_runtime.start().await?;
     }
+    apply_saved_tun_preference(&options, &proxy_runtime).await;
+    apply_saved_system_proxy_preference(&options, &summary.inbounds);
 
     write_runtime_state(&control_endpoint, &options);
     info!(
@@ -775,7 +777,7 @@ fn apply_saved_routing_preferences(options: &RunOptions, router: &Router) {
     }
 }
 
-async fn apply_saved_proxy_preferences(options: &RunOptions, proxy_runtime: &ProxyRuntime) {
+async fn apply_saved_lan_proxy_preference(options: &RunOptions, proxy_runtime: &ProxyRuntime) {
     let preferences_path = process_manager::preferences_path(&options.state_dir);
     let preferences = match process_manager::load_preferences(&preferences_path) {
         Ok(preferences) => preferences,
@@ -783,7 +785,7 @@ async fn apply_saved_proxy_preferences(options: &RunOptions, proxy_runtime: &Pro
             warn!(
                 preferences = %preferences_path.display(),
                 error = %err,
-                "failed to load proxy preferences"
+                "failed to load LAN proxy preference"
             );
             return;
         }
@@ -795,8 +797,89 @@ async fn apply_saved_proxy_preferences(options: &RunOptions, proxy_runtime: &Pro
         warn!(
             preferences = %preferences_path.display(),
             error = %err,
-            "failed to apply proxy preferences"
+            "failed to apply LAN proxy preference"
         );
+    }
+}
+
+async fn apply_saved_tun_preference(options: &RunOptions, proxy_runtime: &ProxyRuntime) {
+    let preferences_path = process_manager::preferences_path(&options.state_dir);
+    let preferences = match process_manager::load_preferences(&preferences_path) {
+        Ok(preferences) => preferences,
+        Err(err) => {
+            warn!(
+                preferences = %preferences_path.display(),
+                error = %err,
+                "failed to load TUN preference"
+            );
+            return;
+        }
+    };
+    if !preferences.tun_enabled {
+        return;
+    }
+    match proxy_runtime.set_tun_enabled(true).await {
+        Ok(snapshot) => info!(
+            preferences = %preferences_path.display(),
+            tun_enabled = snapshot.tun_enabled,
+            tun_status = ?snapshot.tun_status,
+            "restored TUN preference"
+        ),
+        Err(err) => warn!(
+            preferences = %preferences_path.display(),
+            error = %err,
+            "failed to restore TUN preference"
+        ),
+    }
+}
+
+fn apply_saved_system_proxy_preference(options: &RunOptions, inbounds: &[String]) {
+    let preferences_path = process_manager::preferences_path(&options.state_dir);
+    let preferences = match process_manager::load_preferences(&preferences_path) {
+        Ok(preferences) => preferences,
+        Err(err) => {
+            warn!(
+                preferences = %preferences_path.display(),
+                error = %err,
+                "failed to load system proxy preference"
+            );
+            return;
+        }
+    };
+    if !preferences.system_proxy_enabled {
+        return;
+    }
+    match system_proxy::switch_with_protocol(
+        inbounds,
+        preferences.system_proxy_protocol,
+        system_proxy::SystemProxySwitch::Enable,
+    ) {
+        Ok(status) => {
+            if let Some(target) = status.target.as_ref()
+                && let Err(err) =
+                    process_manager::update_preferences(&preferences_path, |preferences| {
+                        preferences.system_proxy_target = Some(target.clone());
+                    })
+            {
+                warn!(
+                    preferences = %preferences_path.display(),
+                    error = %err,
+                    "failed to record restored system proxy target"
+                );
+            }
+            info!(
+                preferences = %preferences_path.display(),
+                supported = status.supported,
+                enabled = status.enabled,
+                managed = status.managed,
+                "restored system proxy preference"
+            );
+        }
+        Err(err) => warn!(
+            preferences = %preferences_path.display(),
+            error = %err,
+            "failed to restore system proxy preference"
+        ),
     }
 }
 
@@ -964,6 +1047,33 @@ mod tests {
             &["hybrid:hybrid-in@127.0.0.1:17890 auth=off".to_string()],
         );
         assert_eq!(selected, Some((test_system_proxy_target(), true)));
+
+        let _ = std::fs::remove_dir_all(dir);
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_cleanup_keeps_system_proxy_restore_preference() -> Result<()> {
+        let dir = std::env::temp_dir().join(format!(
+            "tabbymew-app-cleanup-restore-preference-test-{}",
+            std::process::id()
+        ));
+        let options = test_run_options(dir.clone());
+        process_manager::save_preferences(
+            process_manager::preferences_path(&dir),
+            &process_manager::RuntimePreferences {
+                system_proxy_enabled: true,
+                system_proxy_target: Some(test_system_proxy_target()),
+                ..process_manager::RuntimePreferences::default()
+            },
+        )?;
+
+        clear_managed_system_proxy_preference(&options);
+
+        let preferences =
+            process_manager::load_preferences(process_manager::preferences_path(&dir))?;
+        assert!(preferences.system_proxy_enabled);
+        assert_eq!(preferences.system_proxy_target, None);
 
         let _ = std::fs::remove_dir_all(dir);
         Ok(())

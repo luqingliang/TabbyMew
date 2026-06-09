@@ -206,6 +206,45 @@ fn persist_lan_proxy_preference(state: &ControlState, enabled: bool) {
     }
 }
 
+fn persist_tun_preference(state: &ControlState, enabled: bool) {
+    let Some(preferences_file) = preferences_file(state) else {
+        return;
+    };
+    if let Err(err) = crate::process_manager::update_preferences(&preferences_file, |preferences| {
+        preferences.tun_enabled = enabled;
+    }) {
+        warn!(
+            preferences = %preferences_file.display(),
+            error = %err,
+            "failed to persist TUN preference"
+        );
+    }
+}
+
+fn load_system_proxy_enabled_preference(state: &ControlState) -> bool {
+    let Some(preferences_file) = preferences_file(state) else {
+        return false;
+    };
+    crate::process_manager::load_preferences(preferences_file)
+        .map(|preferences| preferences.system_proxy_enabled)
+        .unwrap_or(false)
+}
+
+fn persist_system_proxy_enabled_preference(state: &ControlState, enabled: bool) {
+    let Some(preferences_file) = preferences_file(state) else {
+        return;
+    };
+    if let Err(err) = crate::process_manager::update_preferences(&preferences_file, |preferences| {
+        preferences.system_proxy_enabled = enabled;
+    }) {
+        warn!(
+            preferences = %preferences_file.display(),
+            error = %err,
+            "failed to persist system proxy preference"
+        );
+    }
+}
+
 fn load_managed_system_proxy_target(
     state: &ControlState,
 ) -> Option<system_proxy::SystemProxyTarget> {
@@ -263,6 +302,7 @@ fn persist_managed_system_proxy_target(
         return false;
     };
     match crate::process_manager::update_preferences(&preferences_file, |preferences| {
+        preferences.system_proxy_enabled = true;
         preferences.system_proxy_target = Some(target.clone());
     }) {
         Ok(_) => {

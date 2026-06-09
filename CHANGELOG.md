@@ -10,6 +10,11 @@ relisted in release notes.
 
 ## [Unreleased]
 
+### Added
+
+- Add persistent CLI/TUI controls for user-login autostart, disabled by default.
+- Restore saved TUN and system proxy preferences when the background service starts.
+
 ## [0.1.23] - 2026-06-08
 
 ### Added

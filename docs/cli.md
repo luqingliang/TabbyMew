@@ -66,6 +66,7 @@ service after confirmation.
 | `TabbyMew doctor` | Diagnose lifecycle, cleanup, control API, TUN, system proxy, and routing state | yes |
 | `TabbyMew cleanup` | Clean stale TabbyMew-owned runtime state and TabbyMew-matching system proxy residue | yes |
 | `TabbyMew logs` | Read or follow the current background log | yes |
+| `TabbyMew autostart [status|on|off|toggle]` | Get or switch user login autostart | yes |
 
 ## Runtime Controls
 
@@ -84,6 +85,38 @@ the captured egress interface when auto-route is running, and watchdog restart
 history after sleep/wake recovery. The TUN watchdog also records whether TUN
 is still desired after an unexpected listener exit, and can recover from
 sleep/wake gaps or outbound egress binding drift.
+
+## Login Autostart
+
+TabbyMew never enables autostart by default. The saved switch lives in the
+runtime preferences file under the selected state directory and defaults to
+off:
+
+```bash
+TabbyMew autostart status
+TabbyMew autostart on
+TabbyMew autostart off
+TabbyMew autostart toggle
+```
+
+`autostart on` validates the selected config, saves it as the active config,
+persists the switch, and writes a user-login startup entry that runs
+`TabbyMew start --state-dir <state-dir>`. `autostart off` removes that entry and
+persists the switch as off. TUI users can run `/autostart
+[status|on|off|toggle]`, `/autostart-on`, or `/autostart-off`.
+
+Autostart restores the saved runtime preferences from the selected state
+directory: active config, route mode, global outbound, policy group selections,
+LAN proxy, TUN, and system proxy. On shutdown TabbyMew still cleans up live OS
+state such as TUN listeners and the current system proxy target, but it keeps
+the saved user intent so the next login/start can restore it. TUN restoration
+may still require the normal macOS administrator authorization or Windows
+Administrator approval.
+
+Platform backends are per-user login entries on the supported desktop targets:
+macOS LaunchAgent and Windows
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. Linux is a development
+environment only; `autostart status` reports it as unsupported there.
 
 ## Cleanup and Doctor Contract
 

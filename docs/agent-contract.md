@@ -16,6 +16,8 @@ reports.
   state.
 - Runtime controls with `--json`: `mode`, `global`, `groups`, `tun`,
   `system-proxy`, `rules`, and `subscription`.
+- `TabbyMew autostart ... --json`: persistent user-login autostart switch and
+  platform entry status.
 
 ## JSON Rules
 

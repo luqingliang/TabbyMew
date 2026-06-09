@@ -35,7 +35,7 @@ pub fn append_lifecycle_event(
 const STATE_FILE: &str = "tabbymew-state.json";
 const RUNTIME_STATE_FILE: &str = "tabbymew-runtime.json";
 const PREFERENCES_FILE: &str = "tabbymew-preferences.json";
-const PREFERENCES_VERSION: u32 = 2;
+const PREFERENCES_VERSION: u32 = 4;
 const DEFAULT_LOG_DIR: &str = "logs";
 const DEFAULT_LOG_FILE: &str = "tabbymew.log";
 const SESSION_LOG_PREFIX: &str = "tabbymew-";
@@ -141,6 +141,12 @@ pub struct RuntimePreferences {
     #[serde(default)]
     pub lan_proxy_enabled: bool,
     #[serde(default)]
+    pub tun_enabled: bool,
+    #[serde(default)]
+    pub system_proxy_enabled: bool,
+    #[serde(default)]
+    pub autostart_enabled: bool,
+    #[serde(default)]
     pub route_mode: Option<String>,
     #[serde(default)]
     pub global_outbound: Option<String>,
@@ -158,6 +164,9 @@ impl Default for RuntimePreferences {
             version: PREFERENCES_VERSION,
             active_config: None,
             lan_proxy_enabled: false,
+            tun_enabled: false,
+            system_proxy_enabled: false,
+            autostart_enabled: false,
             route_mode: None,
             global_outbound: None,
             policy_group_selections: BTreeMap::new(),
@@ -731,6 +740,9 @@ mod tests {
         let mut preferences = RuntimePreferences {
             active_config: Some(PathBuf::from("/tmp/subscription.json")),
             lan_proxy_enabled: true,
+            tun_enabled: true,
+            system_proxy_enabled: true,
+            autostart_enabled: true,
             route_mode: Some("global".to_string()),
             global_outbound: Some("Proxy".to_string()),
             system_proxy_protocol: SystemProxyProtocol::Socks,
@@ -753,6 +765,9 @@ mod tests {
             Some(Path::new("/tmp/subscription.json"))
         );
         assert!(loaded.lan_proxy_enabled);
+        assert!(loaded.tun_enabled);
+        assert!(loaded.system_proxy_enabled);
+        assert!(loaded.autostart_enabled);
         assert_eq!(loaded.route_mode.as_deref(), Some("global"));
         assert_eq!(
             loaded
@@ -772,10 +787,16 @@ mod tests {
 
         let updated = update_preferences(&path, |preferences| {
             preferences.lan_proxy_enabled = false;
+            preferences.tun_enabled = false;
+            preferences.system_proxy_enabled = false;
+            preferences.autostart_enabled = false;
             preferences.global_outbound = Some("direct".to_string());
             preferences.system_proxy_protocol = SystemProxyProtocol::HttpConnect;
         })?;
         assert!(!updated.lan_proxy_enabled);
+        assert!(!updated.tun_enabled);
+        assert!(!updated.system_proxy_enabled);
+        assert!(!updated.autostart_enabled);
         assert_eq!(updated.global_outbound.as_deref(), Some("direct"));
         assert_eq!(
             updated.system_proxy_protocol,

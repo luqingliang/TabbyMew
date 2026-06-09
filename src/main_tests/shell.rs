@@ -48,6 +48,18 @@ fn shell_command_registry_supports_lookup_and_search() {
         Some("system-proxy-off")
     );
     assert_eq!(
+        find_shell_command("autostart").map(|command| command.name),
+        Some("autostart")
+    );
+    assert_eq!(
+        find_shell_command("startup").map(|command| command.name),
+        Some("autostart")
+    );
+    assert_eq!(
+        find_shell_command("autostart-off").map(|command| command.name),
+        Some("autostart-off")
+    );
+    assert_eq!(
         find_shell_command("detach").map(|command| command.name),
         Some("detach")
     );
@@ -123,6 +135,9 @@ fn shell_command_registry_supports_lookup_and_search() {
     let lan_proxy_commands = filtered_shell_commands("lan-proxy");
     assert_eq!(lan_proxy_commands.len(), 1);
     assert_eq!(lan_proxy_commands[0].name, "lan-proxy");
+    let autostart_commands = filtered_shell_commands("autostart");
+    assert_eq!(autostart_commands.len(), 1);
+    assert_eq!(autostart_commands[0].name, "autostart");
     assert_eq!(
         filtered_shell_commands("/mode direct")
             .first()
@@ -157,6 +172,7 @@ fn shell_command_registry_supports_lookup_and_search() {
     assert!(command_help_text(None).contains("/subscriptions [filter]"));
     assert!(command_help_text(None).contains("/lan-proxy"));
     assert!(command_help_text(None).contains("/system-proxy"));
+    assert!(command_help_text(None).contains("/autostart [status|on|off|toggle]"));
     assert!(command_help_text(None).contains("/detach"));
     assert!(command_help_text(None).contains("/quit"));
     assert!(!command_help_text(None).contains("/rule-test"));
@@ -169,6 +185,8 @@ fn shell_command_registry_supports_lookup_and_search() {
     assert!(!command_help_text(None).contains("/lan-proxy-off"));
     assert!(!command_help_text(None).contains("/system-proxy-on"));
     assert!(!command_help_text(None).contains("/system-proxy-off"));
+    assert!(!command_help_text(None).contains("/autostart-on"));
+    assert!(!command_help_text(None).contains("/autostart-off"));
     assert!(command_help_text(Some("diag")).contains("/doctor"));
 
     let groups = find_shell_command("groups").expect("groups command");

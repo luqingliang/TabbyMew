@@ -12,12 +12,14 @@ mod lifecycle;
 mod reports;
 #[path = "service_commands/status.rs"]
 mod status;
+#[path = "service_commands/autostart.rs"]
+mod autostart_command;
 #[path = "service_commands/subscriptions.rs"]
 mod subscriptions;
 #[path = "service_commands/wait.rs"]
 mod wait;
 
 use self::{
-    cleanup::*, config_paths::*, doctor::*, formatting::*, lifecycle::*, reports::*, status::*,
-    subscriptions::*, wait::*,
+    autostart_command::*, cleanup::*, config_paths::*, doctor::*, formatting::*, lifecycle::*,
+    reports::*, status::*, subscriptions::*, wait::*,
 };

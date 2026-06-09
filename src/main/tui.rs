@@ -158,8 +158,9 @@ use self::{
     rule_model::*,
     service::*,
     state::{
-        ShellCommandSpec, ShellSession, TuiApp, TuiExitAction, TuiExitConfirmation, TuiMode,
-        TuiServiceStartup, TuiServiceStartupKind, TuiTerminal, TuiTrafficSpeed,
+        ShellCommandSpec, ShellSession, TuiApp, TuiAutostartTone, TuiExitAction,
+        TuiExitConfirmation, TuiMode, TuiServiceStartup, TuiServiceStartupKind, TuiTerminal,
+        TuiTrafficSpeed,
     },
     terminal::*,
     tui_service::*,

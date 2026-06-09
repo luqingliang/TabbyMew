@@ -118,9 +118,33 @@ TabbyMew logs --lines 50
 TabbyMew stop
 ```
 
-TabbyMew does not install auto-start entries by default. LaunchAgent, systemd,
-or scheduled-task recipes should stay optional and must call normal CLI
-commands such as `TabbyMew start` and `TabbyMew stop`.
+TabbyMew does not install autostart entries by default. User-login autostart is
+optional and controlled by a persistent switch:
+
+```bash
+TabbyMew autostart status
+TabbyMew autostart on
+TabbyMew autostart off
+```
+
+The TUI exposes the same switch through `/autostart [status|on|off|toggle]`,
+`/autostart-on`, and `/autostart-off`.
+
+When enabled, TabbyMew writes a per-user startup entry that calls the normal
+background service command:
+
+```bash
+TabbyMew start --state-dir <state-dir>
+```
+
+The started service restores saved runtime preferences from the selected state
+directory, including the active config, route mode, global target, policy group
+selections, LAN proxy, TUN, and system proxy. TUN restoration keeps the same
+platform permission requirements as manual TUN startup.
+
+macOS uses a LaunchAgent under `~/Library/LaunchAgents/`, and Windows uses the
+current user's Run registry key. Linux is only a development environment for
+TabbyMew, so autostart reports unsupported there.
 
 ## Cleanup and Rollback
 

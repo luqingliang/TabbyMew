@@ -79,6 +79,7 @@ pub(crate) struct TuiApp {
     pub(crate) mode: TuiMode,
     pub(crate) status: StatusReport,
     pub(crate) control_snapshot: Option<Value>,
+    pub(crate) autostart: TuiAutostartSummary,
     pub(crate) command_query: String,
     pub(crate) selected_command: usize,
     pub(crate) route_mode_selection: usize,
@@ -125,6 +126,28 @@ pub(crate) struct TuiApp {
 }
 
 const TUI_TRAFFIC_SPEED_MAX_SAMPLE_AGE: Duration = Duration::from_secs(10);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TuiAutostartTone {
+    Good,
+    Muted,
+    Warning,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TuiAutostartSummary {
+    pub(crate) label: String,
+    pub(crate) tone: TuiAutostartTone,
+}
+
+impl Default for TuiAutostartSummary {
+    fn default() -> Self {
+        Self {
+            label: "autostart: off".to_string(),
+            tone: TuiAutostartTone::Muted,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TuiTrafficSample {
@@ -199,11 +222,13 @@ impl TuiApp {
         let control_snapshot = collect_control_snapshot_for_report(&status, session.timeout).await;
         let traffic_sample = tui_traffic_sample(control_snapshot.as_ref(), Instant::now());
         let dashboard_log_tail = tui_dashboard_log_tail(&session, &status, 80);
+        let autostart = tui_autostart_summary(&session.state_dir);
         Ok(Self {
             session,
             mode: TuiMode::Dashboard,
             status,
             control_snapshot,
+            autostart,
             command_query: String::new(),
             selected_command: 0,
             route_mode_selection: 0,
@@ -264,8 +289,13 @@ impl TuiApp {
             collect_control_snapshot_for_report(&self.status, self.session.timeout).await;
         self.refresh_traffic_speed();
         self.dashboard_log_tail = tui_dashboard_log_tail(&self.session, &self.status, 80);
+        self.refresh_autostart_status();
         self.last_refresh = Instant::now();
         Ok(())
+    }
+
+    pub(crate) fn refresh_autostart_status(&mut self) {
+        self.autostart = tui_autostart_summary(&self.session.state_dir);
     }
 
     fn refresh_traffic_speed(&mut self) {
@@ -409,6 +439,42 @@ impl TuiApp {
             .subscription_add_field
             .min(TUI_SUBSCRIPTION_ADD_FIELDS - 1);
     }
+}
+
+pub(crate) fn tui_autostart_summary(state_dir: &Path) -> TuiAutostartSummary {
+    match crate::autostart::report(state_dir, None) {
+        Ok(report) => tui_autostart_summary_from_report(&report),
+        Err(_) => TuiAutostartSummary {
+            label: "autostart: unknown".to_string(),
+            tone: TuiAutostartTone::Warning,
+        },
+    }
+}
+
+pub(crate) fn tui_autostart_summary_from_report(
+    report: &crate::autostart::AutostartReport,
+) -> TuiAutostartSummary {
+    let mut label = format!("autostart: {}", if report.enabled { "on" } else { "off" });
+    let tone = if !report.supported {
+        if report.enabled {
+            label.push_str(" (unsupported)");
+            TuiAutostartTone::Warning
+        } else {
+            TuiAutostartTone::Muted
+        }
+    } else if !report.synced {
+        if report.enabled {
+            label.push_str(" (repair)");
+        } else {
+            label.push_str(" (entry)");
+        }
+        TuiAutostartTone::Warning
+    } else if report.enabled {
+        TuiAutostartTone::Good
+    } else {
+        TuiAutostartTone::Muted
+    };
+    TuiAutostartSummary { label, tone }
 }
 
 pub(crate) fn tui_traffic_sample(

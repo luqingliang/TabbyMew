@@ -166,6 +166,33 @@ pub(crate) async fn execute_tui_command(
             app.output_scroll = 0;
             app.mode = TuiMode::Output;
         }
+        "autostart" => {
+            let action = parse_tui_autostart_action(args)?;
+            let text = tui_autostart_command(&app.session, action)?;
+            app.refresh_autostart_status();
+            app.output_title = "Autostart".to_string();
+            app.output = text;
+            app.output_scroll = 0;
+            app.mode = TuiMode::Output;
+        }
+        "autostart-on" => {
+            let text =
+                tui_autostart_command(&app.session, crate::autostart::AutostartAction::Enable)?;
+            app.refresh_autostart_status();
+            app.output_title = "Autostart On".to_string();
+            app.output = text;
+            app.output_scroll = 0;
+            app.mode = TuiMode::Output;
+        }
+        "autostart-off" => {
+            let text =
+                tui_autostart_command(&app.session, crate::autostart::AutostartAction::Disable)?;
+            app.refresh_autostart_status();
+            app.output_title = "Autostart Off".to_string();
+            app.output = text;
+            app.output_scroll = 0;
+            app.mode = TuiMode::Output;
+        }
         "cleanup" => {
             let report = cleanup_service_state(&app.session.state_dir)?;
             let mut output = Vec::new();

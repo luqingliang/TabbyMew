@@ -49,6 +49,12 @@ enum Command {
         about = "Get or switch the OS system proxy"
     )]
     SystemProxy(SystemProxyCommand),
+    #[command(
+        name = "autostart",
+        alias = "startup",
+        about = "Get or switch user login autostart"
+    )]
+    Autostart(AutostartCommand),
     #[command(about = "Query read-only local control API endpoints")]
     Api(ApiCommand),
     #[command(about = "Manage route rules through the local control API")]
@@ -275,6 +281,18 @@ struct TunCommand {
 struct SystemProxyCommand {
     #[command(flatten)]
     control: RuntimeControlOptions,
+
+    #[arg(value_name = "status|on|off|toggle")]
+    action: Option<String>,
+
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Parser)]
+struct AutostartCommand {
+    #[arg(long)]
+    state_dir: Option<PathBuf>,
 
     #[arg(value_name = "status|on|off|toggle")]
     action: Option<String>,
