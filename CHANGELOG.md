@@ -10,6 +10,8 @@ relisted in release notes.
 
 ## [Unreleased]
 
+## [0.1.30] - 2026-06-09
+
 ### Added
 
 - Add persistent CLI/TUI controls for user-login autostart, disabled by default.
