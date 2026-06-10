@@ -74,6 +74,7 @@ pub struct NetworkFingerprint {
     pub dns_servers: Vec<String>,
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 impl NetworkFingerprint {
     pub fn new(
         interface: impl Into<String>,
@@ -88,7 +89,9 @@ impl NetworkFingerprint {
             dns_servers: normalized_fingerprint_values(dns_servers),
         }
     }
+}
 
+impl NetworkFingerprint {
     pub fn summary(&self) -> String {
         format!(
             "interface={} ipv4={} router={} dns={}",
@@ -710,6 +713,7 @@ fn get_cf_dict_string_array(dict: &CFDictionary, key: &str) -> Option<Vec<String
     )
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 fn normalized_fingerprint_values(values: Vec<String>) -> Vec<String> {
     let mut values = values
         .into_iter()
@@ -720,6 +724,7 @@ fn normalized_fingerprint_values(values: Vec<String>) -> Vec<String> {
     values
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 fn non_empty_fingerprint_value(value: String) -> Option<String> {
     let value = value.trim();
     (!value.is_empty()).then(|| value.to_string())
