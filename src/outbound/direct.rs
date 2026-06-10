@@ -137,16 +137,12 @@ async fn connect_resolved(
     domain: &str,
     port: u16,
 ) -> std::io::Result<TcpStream> {
-    let addrs = usable_direct_addrs_only(
-        dns.lookup(domain, port)
-            .await
-            .map_err(std::io::Error::other)?,
-    )
-    .ok_or_else(|| {
-        io::Error::other(format!(
-            "DNS lookup for {domain}:{port} returned no usable direct addresses"
-        ))
-    })?;
+    let looked_up = dns
+        .lookup(domain, port)
+        .await
+        .map_err(std::io::Error::other)?;
+    let addrs = usable_direct_addrs_only(looked_up.clone())
+        .ok_or_else(|| direct_no_usable_addrs_error(domain, port, &looked_up))?;
     connect_happy_eyeballs(
         addrs,
         format!("connecting direct destination {domain}:{port}"),
@@ -164,11 +160,8 @@ async fn connect_system_resolved(domain: &str, port: u16) -> std::io::Result<Tcp
     )
     .await
     .map_err(io::Error::other)?;
-    let addrs = usable_direct_addrs_only(addrs).ok_or_else(|| {
-        io::Error::other(format!(
-            "DNS lookup for {domain}:{port} returned no usable direct addresses"
-        ))
-    })?;
+    let addrs = usable_direct_addrs_only(addrs.clone())
+        .ok_or_else(|| direct_no_usable_addrs_error(domain, port, &addrs))?;
     connect_happy_eyeballs(
         addrs,
         format!("connecting direct destination {domain}:{port}"),
@@ -281,25 +274,19 @@ async fn resolve_udp_destination(
     };
 
     let addr = if let Some(addrs) = session.resolved_destination_addrs() {
-        usable_direct_addrs_only(addrs)
-            .and_then(|addrs| addrs.into_iter().next())
-            .with_context(|| format!("UDP destination {destination} did not resolve"))?
+        first_usable_direct_addr_or_error(domain, destination.port, addrs)?
     } else if let Some(dns) = dns {
-        usable_direct_addrs_only(dns.lookup(domain, destination.port).await?)
-            .and_then(|addrs| addrs.into_iter().next())
-            .with_context(|| format!("UDP destination {destination} did not resolve"))?
+        let looked_up = dns.lookup(domain, destination.port).await?;
+        first_usable_direct_addr_or_error(domain, destination.port, looked_up)?
     } else {
-        usable_direct_addrs_only(
-            timeout::resolve_direct_host_with_dns(
-                domain,
-                destination.port,
-                None,
-                &format!("resolving UDP destination {destination}"),
-            )
-            .await?,
+        let looked_up = timeout::resolve_direct_host_with_dns(
+            domain,
+            destination.port,
+            None,
+            &format!("resolving UDP destination {destination}"),
         )
-        .and_then(|addrs| addrs.into_iter().next())
-        .with_context(|| format!("UDP destination {destination} did not resolve"))?
+        .await?;
+        first_usable_direct_addr_or_error(domain, destination.port, looked_up)?
     };
     ensure_direct_addr_supported(addr)
         .with_context(|| format!("UDP destination {destination} did not resolve"))?;
@@ -309,7 +296,24 @@ async fn resolve_udp_destination(
     }))
 }
 
+fn first_usable_direct_addr_or_error(
+    domain: &str,
+    port: u16,
+    addrs: Vec<SocketAddr>,
+) -> Result<SocketAddr> {
+    usable_direct_addrs_only(addrs.clone())
+        .with_context(|| direct_no_usable_addrs_error(domain, port, &addrs).to_string())?
+        .into_iter()
+        .next()
+        .with_context(|| format!("DNS lookup for {domain}:{port} returned no usable addresses"))
+}
+
 fn ensure_direct_addr_supported(addr: SocketAddr) -> io::Result<()> {
+    if is_tun_virtual_ip(addr.ip()) {
+        return Err(io::Error::other(format!(
+            "direct destination {addr} is a TUN fake-IP address; virtual DNS mapping may be stale or direct routing bypassed the TUN DNS mapper"
+        )));
+    }
     if egress::remote_addr_supported(addr) {
         Ok(())
     } else {
@@ -333,6 +337,24 @@ fn usable_direct_addrs_only_with(
         .filter(|addr| supports_addr(*addr))
         .collect::<Vec<_>>();
     (!addrs.is_empty()).then_some(addrs)
+}
+
+fn direct_no_usable_addrs_error(domain: &str, port: u16, addrs: &[SocketAddr]) -> io::Error {
+    let fake_ips = addrs
+        .iter()
+        .filter(|addr| is_tun_virtual_ip(addr.ip()))
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if fake_ips.is_empty() {
+        return io::Error::other(format!(
+            "DNS lookup for {domain}:{port} returned no usable direct addresses"
+        ));
+    }
+
+    io::Error::other(format!(
+        "DNS lookup for {domain}:{port} returned no usable direct addresses; fake-IP candidates={}; virtual DNS mapping may be stale or direct routing bypassed the TUN DNS mapper",
+        fake_ips.join(",")
+    ))
 }
 
 fn udp_bind_addr(
@@ -457,6 +479,24 @@ mod tests {
             vec![real]
         );
         assert!(usable_direct_addrs_only_with(vec![fake_a, fake_b], |_| true).is_none());
+    }
+
+    #[test]
+    fn direct_fake_ip_errors_are_diagnostic() {
+        let fake = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(198, 18, 0, 1)), 443);
+        let err = ensure_direct_addr_supported(fake).unwrap_err().to_string();
+
+        assert!(err.contains("fake-IP"));
+        assert!(err.contains("virtual DNS mapping"));
+    }
+
+    #[test]
+    fn no_usable_direct_address_error_mentions_fake_ip_candidates() {
+        let fake = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(198, 18, 0, 1)), 443);
+        let err = direct_no_usable_addrs_error("example.com", 443, &[fake]).to_string();
+
+        assert!(err.contains("fake-IP candidates=198.18.0.1:443"));
+        assert!(err.contains("virtual DNS mapping"));
     }
 
     #[test]

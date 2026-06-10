@@ -43,17 +43,25 @@ struct TunWatchdogRecoveryReason {
     message: String,
 }
 
+#[derive(Debug, Clone, Default)]
+struct TunWatchdogNetworkFingerprintState {
+    last_confirmed: Option<egress::NetworkFingerprint>,
+    pending: Option<egress::NetworkFingerprint>,
+    last_error: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TunWatchdogRecoveryKind {
     ListenerStopped,
     SleepWake,
     Status,
     EgressBinding,
+    NetworkChanged,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TunWatchdogNetworkReadiness {
-    interface: String,
+    fingerprint: egress::NetworkFingerprint,
     attempts: usize,
 }
 
@@ -249,6 +257,7 @@ async fn run_tun_watchdog(proxy_runtime: Arc<ProxyRuntime>, shutdown: Arc<Notify
     interval.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
     let mut last_tick = unix_now();
     let mut last_recovery_attempt: Option<TunWatchdogRecoveryAttempt> = None;
+    let mut network_fingerprint_state = TunWatchdogNetworkFingerprintState::default();
     loop {
         tokio::select! {
             _ = shutdown.notified() => {
@@ -260,7 +269,21 @@ async fn run_tun_watchdog(proxy_runtime: Arc<ProxyRuntime>, shutdown: Arc<Notify
                 last_tick = now;
 
                 let snapshot = proxy_runtime.snapshot().await;
-                let Some(reason) = tun_watchdog_recovery_reason(&snapshot, elapsed) else {
+                if snapshot.tun_enabled
+                    && snapshot.tun_auto_route
+                    && elapsed >= TUN_WATCHDOG_INTERVAL.as_secs().saturating_mul(2)
+                {
+                    info!(
+                        elapsed_seconds = elapsed,
+                        "observed delayed TUN watchdog tick"
+                    );
+                }
+
+                let Some(reason) = tun_watchdog_network_fingerprint_recovery_reason(
+                    &snapshot,
+                    &mut network_fingerprint_state,
+                )
+                .or_else(|| tun_watchdog_recovery_reason(&snapshot, elapsed)) else {
                     continue;
                 };
                 if !should_attempt_tun_watchdog_recovery(last_recovery_attempt, now) {
@@ -295,7 +318,7 @@ async fn run_tun_watchdog(proxy_runtime: Arc<ProxyRuntime>, shutdown: Arc<Notify
                     match readiness {
                         Ok(readiness) => info!(
                             reason = %reason.message,
-                            interface = %readiness.interface,
+                            network = %readiness.fingerprint.summary(),
                             attempts = readiness.attempts,
                             stable_samples = TUN_WATCHDOG_NETWORK_READY_STABLE_SAMPLES,
                             "network state ready for TUN recovery"
@@ -329,13 +352,30 @@ async fn run_tun_watchdog(proxy_runtime: Arc<ProxyRuntime>, shutdown: Arc<Notify
                     at: unix_now(),
                     cooldown,
                 });
-                if let Err(err) = recovery {
-                    warn!(
-                        elapsed_seconds = elapsed,
-                        retry_cooldown_seconds = cooldown.as_secs(),
-                        error = %err,
-                        "failed to recover TUN after watchdog condition"
-                    );
+                match recovery {
+                    Ok(_) => {
+                        if snapshot.tun_auto_route
+                            && platform::tun_egress_binding_supported_for_name(
+                                snapshot.tun_platform,
+                            )
+                        {
+                            refresh_tun_watchdog_network_fingerprint_baseline(
+                                &mut network_fingerprint_state,
+                            );
+                        } else {
+                            reset_tun_watchdog_network_fingerprint_state(
+                                &mut network_fingerprint_state,
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        warn!(
+                            elapsed_seconds = elapsed,
+                            retry_cooldown_seconds = cooldown.as_secs(),
+                            error = %err,
+                            "failed to recover TUN after watchdog condition"
+                        );
+                    }
                 }
             }
         }
@@ -398,6 +438,107 @@ fn tun_egress_binding_recovery_reason(
     }
 }
 
+fn tun_watchdog_network_fingerprint_recovery_reason(
+    snapshot: &ProxyRuntimeSnapshot,
+    state: &mut TunWatchdogNetworkFingerprintState,
+) -> Option<TunWatchdogRecoveryReason> {
+    tun_watchdog_network_fingerprint_recovery_reason_from_sample(snapshot, state, || {
+        egress::network_fingerprint().map_err(|err| format!("{err:#}"))
+    })
+}
+
+fn tun_watchdog_network_fingerprint_recovery_reason_from_sample(
+    snapshot: &ProxyRuntimeSnapshot,
+    state: &mut TunWatchdogNetworkFingerprintState,
+    read_fingerprint: impl FnOnce() -> std::result::Result<egress::NetworkFingerprint, String>,
+) -> Option<TunWatchdogRecoveryReason> {
+    if !(snapshot.tun_enabled
+        && snapshot.tun_auto_route
+        && platform::tun_egress_binding_supported_for_name(snapshot.tun_platform))
+    {
+        reset_tun_watchdog_network_fingerprint_state(state);
+        return None;
+    }
+
+    let current = match read_fingerprint() {
+        Ok(current) => {
+            state.last_error = None;
+            current
+        }
+        Err(err) => {
+            if state.last_error.as_deref() != Some(err.as_str()) {
+                warn!(error = %err, "failed to read TUN network fingerprint");
+                state.last_error = Some(err);
+            }
+            return None;
+        }
+    };
+
+    let Some(previous) = state.last_confirmed.as_ref() else {
+        info!(
+            network = %current.summary(),
+            "captured TUN network fingerprint"
+        );
+        state.last_confirmed = Some(current);
+        state.pending = None;
+        return None;
+    };
+
+    if previous == &current {
+        state.pending = None;
+        return None;
+    }
+
+    let message = format!(
+        "TUN network fingerprint changed from {} to {}",
+        previous.summary(),
+        current.summary()
+    );
+    state.pending = Some(current);
+    Some(TunWatchdogRecoveryReason {
+        kind: TunWatchdogRecoveryKind::NetworkChanged,
+        message,
+    })
+}
+
+fn refresh_tun_watchdog_network_fingerprint_baseline(
+    state: &mut TunWatchdogNetworkFingerprintState,
+) {
+    if let Some(pending) = state.pending.take() {
+        info!(
+            network = %pending.summary(),
+            "confirmed TUN network fingerprint after recovery"
+        );
+        state.last_confirmed = Some(pending);
+        state.last_error = None;
+        return;
+    }
+
+    match egress::network_fingerprint() {
+        Ok(current) => {
+            info!(
+                network = %current.summary(),
+                "refreshed TUN network fingerprint after recovery"
+            );
+            state.last_confirmed = Some(current);
+            state.last_error = None;
+        }
+        Err(err) => {
+            let err = format!("{err:#}");
+            if state.last_error.as_deref() != Some(err.as_str()) {
+                warn!(error = %err, "failed to refresh TUN network fingerprint after recovery");
+                state.last_error = Some(err);
+            }
+        }
+    }
+}
+
+fn reset_tun_watchdog_network_fingerprint_state(state: &mut TunWatchdogNetworkFingerprintState) {
+    state.last_confirmed = None;
+    state.pending = None;
+    state.last_error = None;
+}
+
 fn should_gate_tun_watchdog_recovery_on_network(
     snapshot: &ProxyRuntimeSnapshot,
     reason: &TunWatchdogRecoveryReason,
@@ -409,6 +550,7 @@ fn should_gate_tun_watchdog_recovery_on_network(
             TunWatchdogRecoveryKind::ListenerStopped
                 | TunWatchdogRecoveryKind::SleepWake
                 | TunWatchdogRecoveryKind::EgressBinding
+                | TunWatchdogRecoveryKind::NetworkChanged
         )
 }
 
@@ -431,35 +573,35 @@ async fn wait_for_tun_watchdog_network_ready(
     let deadline = time::Instant::now() + TUN_WATCHDOG_NETWORK_READY_TIMEOUT;
     let mut attempts = 0usize;
     let mut stable_samples = 0usize;
-    let mut last_interface = None::<String>;
+    let mut last_fingerprint = None::<egress::NetworkFingerprint>;
     let mut last_error: Option<String>;
 
     loop {
         attempts = attempts.saturating_add(1);
-        match egress::default_interface_name() {
-            Ok(interface) if interface.trim().is_empty() => {
+        match egress::network_fingerprint() {
+            Ok(fingerprint) if fingerprint.interface.trim().is_empty() => {
                 stable_samples = 0;
-                last_interface = None;
+                last_fingerprint = None;
                 last_error = Some("default network interface is empty".to_string());
             }
-            Ok(interface) => {
-                if last_interface.as_deref() == Some(interface.as_str()) {
+            Ok(fingerprint) => {
+                if last_fingerprint.as_ref() == Some(&fingerprint) {
                     stable_samples = stable_samples.saturating_add(1);
                 } else {
                     stable_samples = 1;
-                    last_interface = Some(interface.clone());
+                    last_fingerprint = Some(fingerprint.clone());
                 }
                 last_error = None;
                 if stable_samples >= TUN_WATCHDOG_NETWORK_READY_STABLE_SAMPLES {
                     return Some(Ok(TunWatchdogNetworkReadiness {
-                        interface,
+                        fingerprint,
                         attempts,
                     }));
                 }
             }
             Err(err) => {
                 stable_samples = 0;
-                last_interface = None;
+                last_fingerprint = None;
                 last_error = Some(format!("{err:#}"));
             }
         }
@@ -467,10 +609,13 @@ async fn wait_for_tun_watchdog_network_ready(
         let now = time::Instant::now();
         if now >= deadline {
             return Some(Err(anyhow!(
-                "network state not ready for TUN recovery after {}s; attempts={}; last_interface={}; last_error={}",
+                "network state not ready for TUN recovery after {}s; attempts={}; last_network={}; last_error={}",
                 TUN_WATCHDOG_NETWORK_READY_TIMEOUT.as_secs(),
                 attempts,
-                last_interface.as_deref().unwrap_or("-"),
+                last_fingerprint
+                    .as_ref()
+                    .map(|fingerprint| fingerprint.summary())
+                    .unwrap_or_else(|| "-".to_string()),
                 last_error.as_deref().unwrap_or("-")
             )));
         }
@@ -1214,6 +1359,22 @@ mod tests {
             ),
             &reason,
         ));
+
+        let reason = TunWatchdogRecoveryReason {
+            kind: TunWatchdogRecoveryKind::NetworkChanged,
+            message: "TUN network fingerprint changed".to_string(),
+        };
+        assert!(should_gate_tun_watchdog_recovery_on_network(
+            &test_tun_snapshot(
+                true,
+                true,
+                true,
+                TunRuntimeStatus::Running,
+                Some("en0"),
+                Some("en0"),
+            ),
+            &reason,
+        ));
     }
 
     #[test]
@@ -1271,6 +1432,86 @@ mod tests {
         );
     }
 
+    #[test]
+    fn tun_watchdog_detects_network_fingerprint_changes() {
+        let snapshot = test_tun_snapshot(
+            true,
+            true,
+            true,
+            TunRuntimeStatus::Running,
+            Some("en0"),
+            Some("en0"),
+        );
+        let mut state = TunWatchdogNetworkFingerprintState::default();
+        let first = test_network_fingerprint("en0", "192.0.2.10", "192.0.2.1", "1.1.1.1");
+        let second = test_network_fingerprint("en0", "192.0.2.20", "192.0.2.1", "1.1.1.1");
+
+        assert!(
+            tun_watchdog_network_fingerprint_recovery_reason_from_sample(
+                &snapshot,
+                &mut state,
+                || Ok(first.clone()),
+            )
+            .is_none()
+        );
+        assert_eq!(state.last_confirmed, Some(first.clone()));
+
+        let reason = tun_watchdog_network_fingerprint_recovery_reason_from_sample(
+            &snapshot,
+            &mut state,
+            || Ok(second.clone()),
+        )
+        .expect("network change should trigger recovery");
+
+        assert_eq!(reason.kind, TunWatchdogRecoveryKind::NetworkChanged);
+        assert!(reason.message.contains("192.0.2.10"));
+        assert!(reason.message.contains("192.0.2.20"));
+        assert_eq!(state.last_confirmed, Some(first));
+        assert_eq!(state.pending, Some(second.clone()));
+
+        refresh_tun_watchdog_network_fingerprint_baseline(&mut state);
+        assert_eq!(state.last_confirmed, Some(second));
+        assert!(state.pending.is_none());
+    }
+
+    #[test]
+    fn tun_watchdog_network_fingerprint_resets_when_tun_is_not_auto_route() {
+        let snapshot = test_tun_snapshot(
+            true,
+            true,
+            false,
+            TunRuntimeStatus::Running,
+            Some("en0"),
+            Some("en0"),
+        );
+        let mut state = TunWatchdogNetworkFingerprintState {
+            last_confirmed: Some(test_network_fingerprint(
+                "en0",
+                "192.0.2.10",
+                "192.0.2.1",
+                "1.1.1.1",
+            )),
+            pending: None,
+            last_error: Some("old".to_string()),
+        };
+
+        assert!(
+            tun_watchdog_network_fingerprint_recovery_reason_from_sample(
+                &snapshot,
+                &mut state,
+                || Ok(test_network_fingerprint(
+                    "en0",
+                    "192.0.2.20",
+                    "192.0.2.1",
+                    "1.1.1.1",
+                )),
+            )
+            .is_none()
+        );
+        assert!(state.last_confirmed.is_none());
+        assert!(state.last_error.is_none());
+    }
+
     fn test_tun_snapshot(
         desired_enabled: bool,
         enabled: bool,
@@ -1308,5 +1549,19 @@ mod tests {
             configured_tun_inbounds: 1,
             last_error: None,
         }
+    }
+
+    fn test_network_fingerprint(
+        interface: &str,
+        ipv4: &str,
+        router: &str,
+        dns: &str,
+    ) -> egress::NetworkFingerprint {
+        egress::NetworkFingerprint::new(
+            interface,
+            vec![ipv4.to_string()],
+            Some(router.to_string()),
+            vec![dns.to_string()],
+        )
     }
 }

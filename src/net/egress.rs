@@ -12,12 +12,13 @@ use std::{ffi::CString, os::fd::AsRawFd};
 #[cfg(target_os = "macos")]
 use system_configuration::{
     core_foundation::{
-        base::TCFType,
+        array::CFArray,
+        base::{TCFType, TCFTypeRef},
         dictionary::CFDictionary,
         propertylist::{CFPropertyList, CFPropertyListSubClass},
-        string::CFString,
+        string::{CFString, CFStringRef},
     },
-    dynamic_store::SCDynamicStoreBuilder,
+    dynamic_store::{SCDynamicStore, SCDynamicStoreBuilder},
 };
 
 #[cfg(target_os = "windows")]
@@ -65,6 +66,40 @@ const IP_UNICAST_IF: i32 = 31;
 #[cfg(target_os = "windows")]
 const IPV6_UNICAST_IF: i32 = 31;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkFingerprint {
+    pub interface: String,
+    pub ipv4_addrs: Vec<String>,
+    pub router: Option<String>,
+    pub dns_servers: Vec<String>,
+}
+
+impl NetworkFingerprint {
+    pub fn new(
+        interface: impl Into<String>,
+        ipv4_addrs: Vec<String>,
+        router: Option<String>,
+        dns_servers: Vec<String>,
+    ) -> Self {
+        Self {
+            interface: interface.into(),
+            ipv4_addrs: normalized_fingerprint_values(ipv4_addrs),
+            router: router.and_then(non_empty_fingerprint_value),
+            dns_servers: normalized_fingerprint_values(dns_servers),
+        }
+    }
+
+    pub fn summary(&self) -> String {
+        format!(
+            "interface={} ipv4={} router={} dns={}",
+            non_empty_display(&self.interface),
+            joined_or_dash(&self.ipv4_addrs),
+            self.router.as_deref().unwrap_or("-"),
+            joined_or_dash(&self.dns_servers)
+        )
+    }
+}
+
 #[cfg(target_os = "macos")]
 pub fn default_interface_name() -> io::Result<String> {
     let store = SCDynamicStoreBuilder::new("TabbyMew egress interface")
@@ -80,6 +115,47 @@ pub fn default_interface_name() -> io::Result<String> {
         return Err(io::Error::other("failed to read primary network interface"));
     };
     Ok(interface.to_string())
+}
+
+#[cfg(target_os = "macos")]
+pub fn network_fingerprint() -> io::Result<NetworkFingerprint> {
+    let store = SCDynamicStoreBuilder::new("TabbyMew network fingerprint")
+        .build()
+        .ok_or_else(|| io::Error::other("failed to create SC DynamicStore"))?;
+    let global_ipv4 = get_dynamic_store_dict(&store, "State:/Network/Global/IPv4")
+        .ok_or_else(|| io::Error::other("failed to read network state"))?;
+    let interface = get_cf_dict_string(&global_ipv4, "PrimaryInterface")
+        .ok_or_else(|| io::Error::other("failed to read primary network interface"))?;
+    if interface.trim().is_empty() {
+        return Err(io::Error::other("primary network interface is empty"));
+    }
+
+    let service = get_cf_dict_string(&global_ipv4, "PrimaryService");
+    let router = get_cf_dict_string(&global_ipv4, "Router");
+    let ipv4_addrs = service
+        .as_deref()
+        .and_then(|service| {
+            get_dynamic_store_dict(&store, &format!("State:/Network/Service/{service}/IPv4"))
+                .and_then(|dict| get_cf_dict_string_array(&dict, "Addresses"))
+        })
+        .or_else(|| {
+            get_dynamic_store_dict(
+                &store,
+                &format!("State:/Network/Interface/{interface}/IPv4"),
+            )
+            .and_then(|dict| get_cf_dict_string_array(&dict, "Addresses"))
+        })
+        .unwrap_or_default();
+    let dns_servers = get_dynamic_store_dict(&store, "State:/Network/Global/DNS")
+        .and_then(|dict| get_cf_dict_string_array(&dict, "ServerAddresses"))
+        .unwrap_or_default();
+
+    Ok(NetworkFingerprint::new(
+        interface,
+        ipv4_addrs,
+        router,
+        dns_servers,
+    ))
 }
 
 #[cfg(target_os = "windows")]
@@ -108,10 +184,27 @@ pub fn default_interface_name() -> io::Result<String> {
     })
 }
 
+#[cfg(target_os = "windows")]
+pub fn network_fingerprint() -> io::Result<NetworkFingerprint> {
+    Ok(NetworkFingerprint::new(
+        default_interface_name()?,
+        Vec::new(),
+        None,
+        Vec::new(),
+    ))
+}
+
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn default_interface_name() -> io::Result<String> {
     Err(io::Error::other(
         "egress interface binding is not implemented on this platform",
+    ))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub fn network_fingerprint() -> io::Result<NetworkFingerprint> {
+    Err(io::Error::other(
+        "network fingerprint is not implemented on this platform",
     ))
 }
 
@@ -593,6 +686,57 @@ where
     property_list.downcast::<T>()
 }
 
+#[cfg(target_os = "macos")]
+fn get_dynamic_store_dict(store: &SCDynamicStore, key: &str) -> Option<CFDictionary> {
+    store
+        .get(key)
+        .and_then(|value| value.downcast::<CFDictionary>())
+}
+
+#[cfg(target_os = "macos")]
+fn get_cf_dict_string(dict: &CFDictionary, key: &str) -> Option<String> {
+    get_cf_dict_entry::<CFString>(dict, key.into()).map(|value| value.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn get_cf_dict_string_array(dict: &CFDictionary, key: &str) -> Option<Vec<String>> {
+    let array = get_cf_dict_entry::<CFArray>(dict, key.into())?;
+    Some(
+        array
+            .iter()
+            .map(|ptr| unsafe { CFString::wrap_under_get_rule(CFStringRef::from_void_ptr(*ptr)) })
+            .map(|value| value.to_string())
+            .collect(),
+    )
+}
+
+fn normalized_fingerprint_values(values: Vec<String>) -> Vec<String> {
+    let mut values = values
+        .into_iter()
+        .filter_map(non_empty_fingerprint_value)
+        .collect::<Vec<_>>();
+    values.sort();
+    values.dedup();
+    values
+}
+
+fn non_empty_fingerprint_value(value: String) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn non_empty_display(value: &str) -> &str {
+    if value.trim().is_empty() { "-" } else { value }
+}
+
+fn joined_or_dash(values: &[String]) -> String {
+    if values.is_empty() {
+        "-".to_string()
+    } else {
+        values.join(",")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -601,6 +745,28 @@ mod tests {
     fn bound_interface_is_empty_by_default() {
         let _ = set_bound_interface(None);
         assert!(bound_interface_name().is_none());
+    }
+
+    #[test]
+    fn network_fingerprint_normalizes_values_for_stable_comparison() {
+        let fingerprint = NetworkFingerprint::new(
+            "en0",
+            vec![
+                "192.0.2.10".to_string(),
+                " ".to_string(),
+                "192.0.2.10".to_string(),
+            ],
+            Some(" ".to_string()),
+            vec!["9.9.9.9".to_string(), "1.1.1.1".to_string()],
+        );
+
+        assert_eq!(fingerprint.ipv4_addrs, vec!["192.0.2.10"]);
+        assert_eq!(fingerprint.router, None);
+        assert_eq!(fingerprint.dns_servers, vec!["1.1.1.1", "9.9.9.9"]);
+        assert_eq!(
+            fingerprint.summary(),
+            "interface=en0 ipv4=192.0.2.10 router=- dns=1.1.1.1,9.9.9.9"
+        );
     }
 
     #[test]
