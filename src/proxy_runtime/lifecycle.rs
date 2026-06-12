@@ -8,7 +8,7 @@ use tracing::{debug, info, warn};
 use crate::{
     config::{InboundConfig, OutboundConfig},
     inbound::{self, tun},
-    resource_limits,
+    platform, resource_limits,
     router::Router,
 };
 
@@ -405,6 +405,15 @@ impl ProxyRuntime {
                 "TUN listeners stopped"
             );
         }
+        flush_system_dns_cache_after_tun_stop().await;
         Ok(self.snapshot().await)
+    }
+}
+
+async fn flush_system_dns_cache_after_tun_stop() {
+    match platform::flush_system_dns_cache().await {
+        Ok(true) => debug!("system DNS cache flushed after TUN stop"),
+        Ok(false) => {}
+        Err(err) => warn!(error = %err, "failed to flush system DNS cache after TUN stop"),
     }
 }

@@ -154,6 +154,37 @@ impl DnsResolver {
         bail!("DNS CNAME chain for {original_domain} is too deep")
     }
 
+    pub async fn lookup_fresh(&self, domain: &str, port: u16) -> Result<Vec<SocketAddr>> {
+        let original_domain = normalize_domain(domain)?;
+        let mut current_domain = original_domain.clone();
+        let mut visited = HashSet::new();
+
+        for _ in 0..8 {
+            if !visited.insert(current_domain.clone()) {
+                bail!("DNS CNAME loop detected for {original_domain}");
+            }
+
+            let lookup = self.lookup_uncached(&current_domain).await?;
+            if !lookup.records.is_empty() {
+                let ips = lookup
+                    .records
+                    .iter()
+                    .map(|record| record.ip)
+                    .collect::<Vec<_>>();
+                return Ok(to_socket_addrs(ips, port));
+            }
+
+            if let Some(cname) = lookup.cnames.first() {
+                current_domain = normalize_domain(&cname.name)?;
+                continue;
+            }
+
+            bail!("DNS lookup for {original_domain} returned no addresses");
+        }
+
+        bail!("DNS CNAME chain for {original_domain} is too deep")
+    }
+
     pub fn server_addrs(&self) -> Vec<SocketAddr> {
         self.servers.clone()
     }
@@ -780,6 +811,38 @@ mod tests {
             vec!["127.0.0.7:9090".parse::<SocketAddr>().unwrap()]
         );
         assert_eq!(query_count.load(AtomicOrdering::Relaxed), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fresh_lookup_bypasses_cached_answers() -> Result<()> {
+        let server = UdpSocket::bind(("127.0.0.1", 0)).await?;
+        let server_addr = server.local_addr()?;
+        let server_task = tokio::spawn(async move {
+            let mut buf = [0u8; 512];
+            for _ in 0..2 {
+                let (n, peer) = server.recv_from(&mut buf).await.unwrap();
+                let qtype = u16::from_be_bytes([buf[n - 4], buf[n - 3]]);
+                let response = dns_response(&buf[..n], qtype == RecordType::A.code());
+                server.send_to(&response, peer).await.unwrap();
+            }
+        });
+
+        let resolver = DnsResolver::from_servers(&[server_addr.to_string()], 5_000)?.unwrap();
+        let fake_ip = IpAddr::V4(Ipv4Addr::new(198, 18, 0, 2));
+        resolver
+            .cache_positive("example.test".to_string(), &[fake_ip], 60)
+            .await;
+
+        assert_eq!(
+            resolver.lookup("example.test", 443).await?,
+            vec![SocketAddr::new(fake_ip, 443)]
+        );
+
+        let fresh = resolver.lookup_fresh("example.test", 443).await?;
+        server_task.await?;
+
+        assert_eq!(fresh, vec!["127.0.0.7:443".parse::<SocketAddr>().unwrap()]);
         Ok(())
     }
 

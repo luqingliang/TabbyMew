@@ -180,6 +180,20 @@ pub async fn resolve_direct_host_with_dns(
         .map(|addrs| addrs.collect())
 }
 
+pub async fn resolve_direct_host_with_fallback_dns(
+    host: &str,
+    port: u16,
+    stage: &str,
+) -> Result<Vec<SocketAddr>> {
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Ok(vec![SocketAddr::new(ip, port)]);
+    }
+    tun_fallback_dns_resolver()
+        .lookup_fresh(host, port)
+        .await
+        .with_context(|| format!("{stage} failed to resolve {host}:{port} with fallback DNS"))
+}
+
 fn tun_fallback_dns_resolver() -> &'static DnsResolver {
     TUN_FALLBACK_DNS.get_or_init(|| {
         let servers = TUN_FALLBACK_DNS_SERVERS

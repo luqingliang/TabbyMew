@@ -19,6 +19,28 @@ pub const CURRENT: Platform = Platform::Unsupported;
 
 pub const TUN_EGRESS_BINDING_UNSUPPORTED_WARNING: &str = "egress interface binding is not implemented on this platform; TUN will rely on proxy server bypass rules";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SystemDnsFlushCommand {
+    pub program: &'static str,
+    pub args: &'static [&'static str],
+}
+
+const WINDOWS_DNS_FLUSH_COMMANDS: &[SystemDnsFlushCommand] = &[SystemDnsFlushCommand {
+    program: "ipconfig",
+    args: &["/flushdns"],
+}];
+
+const MACOS_DNS_FLUSH_COMMANDS: &[SystemDnsFlushCommand] = &[
+    SystemDnsFlushCommand {
+        program: "dscacheutil",
+        args: &["-flushcache"],
+    },
+    SystemDnsFlushCommand {
+        program: "killall",
+        args: &["-HUP", "mDNSResponder"],
+    },
+];
+
 impl Platform {
     pub fn from_name(name: &str) -> Option<Self> {
         match name.trim().to_ascii_lowercase().as_str() {
@@ -164,6 +186,84 @@ pub fn windows_tun_runtime_dll_required() -> bool {
     current() == Platform::Windows
 }
 
+pub fn system_dns_flush_commands_for_platform(
+    platform: Platform,
+) -> &'static [SystemDnsFlushCommand] {
+    match platform {
+        Platform::Windows => WINDOWS_DNS_FLUSH_COMMANDS,
+        Platform::Macos => MACOS_DNS_FLUSH_COMMANDS,
+        Platform::Linux | Platform::Unsupported => &[],
+    }
+}
+
+pub async fn flush_system_dns_cache() -> anyhow::Result<bool> {
+    let commands = system_dns_flush_commands_for_platform(current());
+    if commands.is_empty() {
+        return Ok(false);
+    }
+    run_system_dns_flush_commands(commands).await?;
+    Ok(true)
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+async fn run_system_dns_flush_commands(commands: &[SystemDnsFlushCommand]) -> anyhow::Result<()> {
+    use anyhow::{Context, bail};
+    use std::time::Duration;
+    use tokio::process::Command;
+
+    let command_timeout = Duration::from_secs(5);
+    for command in commands {
+        let mut process = Command::new(command.program);
+        process.kill_on_drop(true);
+        let output_future = process.args(command.args).output();
+        let output = tokio::time::timeout(command_timeout, output_future)
+            .await
+            .with_context(|| {
+                format!(
+                    "{} timed out after {:?}",
+                    system_dns_flush_command_label(command),
+                    command_timeout
+                )
+            })?
+            .with_context(|| {
+                format!("failed to run {}", system_dns_flush_command_label(command))
+            })?;
+        if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let detail = if stderr.trim().is_empty() {
+                stdout.trim()
+            } else {
+                stderr.trim()
+            };
+            bail!(
+                "{} exited with status {}{}",
+                system_dns_flush_command_label(command),
+                output.status,
+                if detail.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {detail}")
+                }
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+async fn run_system_dns_flush_commands(_commands: &[SystemDnsFlushCommand]) -> anyhow::Result<()> {
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn system_dns_flush_command_label(command: &SystemDnsFlushCommand) -> String {
+    std::iter::once(command.program)
+        .chain(command.args.iter().copied())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,5 +301,31 @@ mod tests {
         assert!(tun_egress_binding_expected_for_snapshot(Some("windows")));
         assert!(!tun_egress_binding_expected_for_snapshot(Some("linux")));
         assert!(!tun_egress_binding_expected_for_snapshot(Some("other-os")));
+    }
+
+    #[test]
+    fn system_dns_flush_commands_match_product_platforms() {
+        assert_eq!(
+            system_dns_flush_commands_for_platform(Platform::Windows),
+            &[SystemDnsFlushCommand {
+                program: "ipconfig",
+                args: &["/flushdns"],
+            }]
+        );
+        assert_eq!(
+            system_dns_flush_commands_for_platform(Platform::Macos),
+            &[
+                SystemDnsFlushCommand {
+                    program: "dscacheutil",
+                    args: &["-flushcache"],
+                },
+                SystemDnsFlushCommand {
+                    program: "killall",
+                    args: &["-HUP", "mDNSResponder"],
+                },
+            ]
+        );
+        assert!(system_dns_flush_commands_for_platform(Platform::Linux).is_empty());
+        assert!(system_dns_flush_commands_for_platform(Platform::Unsupported).is_empty());
     }
 }
