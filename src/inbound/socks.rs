@@ -869,11 +869,16 @@ mod tests {
         let mut rejected = TcpStream::connect(proxy_addr).await?;
         rejected.write_all(&[0x05, 0x01, 0x00]).await?;
         let mut buf = [0u8; 2];
-        let n = tokio::time::timeout(Duration::from_secs(1), rejected.read(&mut buf)).await??;
+        let read_result =
+            tokio::time::timeout(Duration::from_secs(1), rejected.read(&mut buf)).await?;
 
         proxy_task.abort();
 
-        assert_eq!(n, 0);
+        match read_result {
+            Ok(n) => assert_eq!(n, 0),
+            Err(err) if err.kind() == std::io::ErrorKind::ConnectionReset => {}
+            Err(err) => return Err(err.into()),
+        }
         assert_eq!(metrics.snapshot().tcp_connection_limit_reached_total, 1);
         Ok(())
     }

@@ -484,15 +484,18 @@ fn tun_watchdog_network_fingerprint_recovery_reason_from_sample(
         return None;
     };
 
-    if previous == &current {
+    if previous.same_recovery_network(&current) {
         state.pending = None;
+        state.last_confirmed = Some(current);
         return None;
     }
 
     let message = format!(
-        "TUN network fingerprint changed from {} to {}",
-        previous.summary(),
-        current.summary()
+        "TUN physical network changed from {} to {} (dns previous={} current={})",
+        previous.recovery_summary(),
+        current.recovery_summary(),
+        previous.dns_summary(),
+        current.dns_summary()
     );
     state.pending = Some(current);
     Some(TunWatchdogRecoveryReason {
@@ -585,12 +588,15 @@ async fn wait_for_tun_watchdog_network_ready(
                 last_error = Some("default network interface is empty".to_string());
             }
             Ok(fingerprint) => {
-                if last_fingerprint.as_ref() == Some(&fingerprint) {
+                if last_fingerprint
+                    .as_ref()
+                    .is_some_and(|last| last.same_recovery_network(&fingerprint))
+                {
                     stable_samples = stable_samples.saturating_add(1);
                 } else {
                     stable_samples = 1;
-                    last_fingerprint = Some(fingerprint.clone());
                 }
+                last_fingerprint = Some(fingerprint.clone());
                 last_error = None;
                 if stable_samples >= TUN_WATCHDOG_NETWORK_READY_STABLE_SAMPLES {
                     return Some(Ok(TunWatchdogNetworkReadiness {
@@ -1470,6 +1476,40 @@ mod tests {
         assert_eq!(state.pending, Some(second.clone()));
 
         refresh_tun_watchdog_network_fingerprint_baseline(&mut state);
+        assert_eq!(state.last_confirmed, Some(second));
+        assert!(state.pending.is_none());
+    }
+
+    #[test]
+    fn tun_watchdog_ignores_dns_only_fingerprint_changes() {
+        let snapshot = test_tun_snapshot(
+            true,
+            true,
+            true,
+            TunRuntimeStatus::Running,
+            Some("en0"),
+            Some("en0"),
+        );
+        let mut state = TunWatchdogNetworkFingerprintState::default();
+        let first = test_network_fingerprint("en0", "192.0.2.10", "192.0.2.1", "192.0.2.1");
+        let second = test_network_fingerprint("en0", "192.0.2.10", "192.0.2.1", "10.0.0.1");
+
+        assert!(
+            tun_watchdog_network_fingerprint_recovery_reason_from_sample(
+                &snapshot,
+                &mut state,
+                || Ok(first),
+            )
+            .is_none()
+        );
+        assert!(
+            tun_watchdog_network_fingerprint_recovery_reason_from_sample(
+                &snapshot,
+                &mut state,
+                || Ok(second.clone()),
+            )
+            .is_none()
+        );
         assert_eq!(state.last_confirmed, Some(second));
         assert!(state.pending.is_none());
     }

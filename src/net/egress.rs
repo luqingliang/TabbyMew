@@ -92,6 +92,25 @@ impl NetworkFingerprint {
 }
 
 impl NetworkFingerprint {
+    pub fn same_recovery_network(&self, other: &Self) -> bool {
+        self.interface == other.interface
+            && self.ipv4_addrs == other.ipv4_addrs
+            && self.router == other.router
+    }
+
+    pub fn recovery_summary(&self) -> String {
+        format!(
+            "interface={} ipv4={} router={}",
+            non_empty_display(&self.interface),
+            joined_or_dash(&self.ipv4_addrs),
+            self.router.as_deref().unwrap_or("-")
+        )
+    }
+
+    pub fn dns_summary(&self) -> String {
+        joined_or_dash(&self.dns_servers)
+    }
+
     pub fn summary(&self) -> String {
         format!(
             "interface={} ipv4={} router={} dns={}",
@@ -772,6 +791,30 @@ mod tests {
             fingerprint.summary(),
             "interface=en0 ipv4=192.0.2.10 router=- dns=1.1.1.1,9.9.9.9"
         );
+    }
+
+    #[test]
+    fn network_fingerprint_recovery_comparison_ignores_dns() {
+        let first = NetworkFingerprint::new(
+            "en0",
+            vec!["192.0.2.10".to_string()],
+            Some("192.0.2.1".to_string()),
+            vec!["192.0.2.1".to_string()],
+        );
+        let second = NetworkFingerprint::new(
+            "en0",
+            vec!["192.0.2.10".to_string()],
+            Some("192.0.2.1".to_string()),
+            vec!["10.0.0.1".to_string()],
+        );
+
+        assert_ne!(first, second);
+        assert!(first.same_recovery_network(&second));
+        assert_eq!(
+            first.recovery_summary(),
+            "interface=en0 ipv4=192.0.2.10 router=192.0.2.1"
+        );
+        assert_eq!(second.dns_summary(), "10.0.0.1");
     }
 
     #[test]
