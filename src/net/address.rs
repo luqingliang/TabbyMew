@@ -51,6 +51,34 @@ impl fmt::Display for Address {
     }
 }
 
+pub fn is_local_or_private_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            ip.is_loopback()
+                || ip.is_private()
+                || ip.is_link_local()
+                || ip.is_multicast()
+                || ip.is_broadcast()
+                || ip.is_unspecified()
+        }
+        IpAddr::V6(ip) => {
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                || is_ipv6_unique_local(ip)
+                || is_ipv6_unicast_link_local(ip)
+        }
+    }
+}
+
+fn is_ipv6_unique_local(ip: Ipv6Addr) -> bool {
+    (ip.segments()[0] & 0xfe00) == 0xfc00
+}
+
+fn is_ipv6_unicast_link_local(ip: Ipv6Addr) -> bool {
+    (ip.segments()[0] & 0xffc0) == 0xfe80
+}
+
 pub async fn read_socks_destination<R>(reader: &mut R) -> Result<Destination>
 where
     R: AsyncRead + Unpin,
@@ -218,5 +246,30 @@ mod tests {
         let dest = parse_authority("[::1]:443", None).unwrap();
         assert_eq!(dest.port, 443);
         assert_eq!(dest.address, Address::Ip("::1".parse().unwrap()));
+    }
+
+    #[test]
+    fn detects_local_or_private_ips() {
+        for ip in [
+            "127.0.0.1",
+            "10.28.10.67",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.1.10",
+            "224.0.0.251",
+            "0.0.0.0",
+            "::1",
+            "fc00::1",
+            "fd00::1",
+            "fe80::1",
+            "ff02::fb",
+            "::",
+        ] {
+            assert!(is_local_or_private_ip(ip.parse().unwrap()), "{ip}");
+        }
+
+        for ip in ["8.8.8.8", "1.1.1.1", "2001:4860:4860::8888"] {
+            assert!(!is_local_or_private_ip(ip.parse().unwrap()), "{ip}");
+        }
     }
 }

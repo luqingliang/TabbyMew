@@ -79,7 +79,7 @@ pub async fn serve(options: TunInboundOptions) -> Result<()> {
     let args = parse_tun2proxy_args(argv.clone())?;
     let shutdown = CancellationToken::new();
     let mut tasks = JoinSet::new();
-    tasks.spawn(socks::serve_listener_with_connection_limit(
+    tasks.spawn(socks::serve_tun_listener_with_connection_limit(
         socks_tag,
         socks_listener,
         options.router.clone(),

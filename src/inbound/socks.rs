@@ -21,7 +21,7 @@ use crate::{
     net::{
         address::{
             Address, Destination, append_socks_destination, destination_from_socket_addr,
-            read_socks_destination, read_socks_destination_from_slice,
+            is_local_or_private_ip, read_socks_destination, read_socks_destination_from_slice,
         },
         tcp,
         udp::{UdpOutboundSession, UdpPacket},
@@ -82,12 +82,60 @@ pub async fn serve_listener_with_connection_limit(
     }
 }
 
+pub async fn serve_tun_listener_with_connection_limit(
+    tag: String,
+    listener: TcpListener,
+    router: Router,
+    max_connections: usize,
+) -> Result<()> {
+    let addr = listener
+        .local_addr()
+        .context("failed to read SOCKS listener address")?;
+    debug!(inbound = %tag, listen = %addr, "SOCKS inbound listening");
+
+    let accept_context = format!("SOCKS inbound {tag}");
+    let limiter = tcp::ConnectionLimiter::new(format!("SOCKS inbound {tag}"), max_connections);
+    loop {
+        let (mut stream, source) = tcp::accept_with_backoff(&listener, &accept_context).await?;
+        tcp::enable_nodelay(&stream, "SOCKS inbound accepted stream");
+        let Some(connection_permit) = limiter.try_acquire() else {
+            if let Some(metrics) = router.runtime_metrics() {
+                metrics.record_tcp_connection_limit_reached(limiter.context());
+            }
+            let _ = stream.shutdown().await;
+            continue;
+        };
+        let tag = tag.clone();
+        let router = router.clone();
+        tokio::spawn(async move {
+            let _connection_permit = connection_permit;
+            if let Err(err) = handle_tcp_with_options(tag, stream, Some(source), router, true).await
+            {
+                debug!(error = %err, "SOCKS connection closed");
+            }
+        });
+    }
+}
+
 pub async fn handle_tcp(
+    tag: String,
+    inbound: TcpStream,
+    source: Option<SocketAddr>,
+    router: Router,
+) -> Result<()> {
+    handle_tcp_with_options(tag, inbound, source, router, false).await
+}
+
+async fn handle_tcp_with_options(
     tag: String,
     mut inbound: TcpStream,
     source: Option<SocketAddr>,
     router: Router,
+    reject_local_direct_destinations: bool,
 ) -> Result<()> {
+    let activity = router
+        .runtime_metrics()
+        .map(|metrics| metrics.track_tcp_connection(&tag));
     let request = read_socks_request(&mut inbound).await?;
     if request.version == SocksRequestVersion::V5 && request.command == 0x03 {
         return handle_udp_associate(tag, inbound, source, router).await;
@@ -97,7 +145,20 @@ pub async fn handle_tcp(
         bail!("SOCKS command {:#x} is not implemented", request.command);
     }
 
-    let session = Session::tcp(tag, source, request.destination.clone());
+    if reject_local_direct_destinations && is_local_or_private_destination(&request.destination) {
+        warn!(
+            destination = %request.destination,
+            network = "tcp",
+            "rejected local/private destination from protected TUN inbound"
+        );
+        let _ = send_reply_for_version(&mut inbound, request.version, 0x05).await;
+        bail!(
+            "local/private destination {} is rejected for protected TUN inbound",
+            request.destination
+        );
+    }
+    let session = Session::tcp(tag, source, request.destination.clone())
+        .with_reject_local_direct_destinations(reject_local_direct_destinations);
     let outbound = match router.pick(&session).await {
         Ok(outbound) => outbound,
         Err(err) => {
@@ -110,6 +171,9 @@ pub async fn handle_tcp(
             return Err(err);
         }
     };
+    if let Some(activity) = &activity {
+        activity.record_outbound(outbound.tag());
+    }
     let mut outbound_stream = match outbound.connect(&session).await {
         Ok(stream) => stream,
         Err(err) => {
@@ -147,6 +211,10 @@ pub async fn handle_tcp(
     )
     .await;
     Ok(())
+}
+
+fn is_local_or_private_destination(destination: &Destination) -> bool {
+    matches!(&destination.address, Address::Ip(ip) if is_local_or_private_ip(*ip))
 }
 
 async fn relay_tcp_with_optional_traffic<L, R>(
@@ -789,7 +857,52 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn tun_socks_listener_closes_new_connections_when_limit_is_full() -> Result<()> {
+        let metrics = std::sync::Arc::new(RuntimeMetrics::new());
+        let (proxy_addr, proxy_task) =
+            spawn_tun_socks_inbound(direct_router_with_metrics(metrics.clone()), 1).await?;
+
+        let _holder = TcpStream::connect(proxy_addr).await?;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let mut rejected = TcpStream::connect(proxy_addr).await?;
+        rejected.write_all(&[0x05, 0x01, 0x00]).await?;
+        let mut buf = [0u8; 2];
+        let n = tokio::time::timeout(Duration::from_secs(1), rejected.read(&mut buf)).await??;
+
+        proxy_task.abort();
+
+        assert_eq!(n, 0);
+        assert_eq!(metrics.snapshot().tcp_connection_limit_reached_total, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn tun_socks_listener_rejects_local_private_tcp_destinations() -> Result<()> {
+        let (proxy_addr, proxy_task) =
+            spawn_tun_socks_inbound(direct_router(), tcp::DEFAULT_MAX_INBOUND_CONNECTIONS).await?;
+        let mut client = TcpStream::connect(proxy_addr).await?;
+
+        socks_connect_expect_status(
+            &mut client,
+            Destination::new(Address::Ip("10.28.10.67".parse().unwrap()), 49735),
+            0x05,
+        )
+        .await?;
+        proxy_task.abort();
+        Ok(())
+    }
+
     async fn socks_connect(client: &mut TcpStream, destination: Destination) -> Result<()> {
+        socks_connect_expect_status(client, destination, 0x00).await
+    }
+
+    async fn socks_connect_expect_status(
+        client: &mut TcpStream,
+        destination: Destination,
+        expected_status: u8,
+    ) -> Result<()> {
         client.write_all(&[0x05, 0x01, 0x00]).await?;
         let mut method_response = [0u8; 2];
         client.read_exact(&mut method_response).await?;
@@ -802,7 +915,7 @@ mod tests {
         let mut reply = [0u8; 3];
         client.read_exact(&mut reply).await?;
         let _bound = read_socks_destination(client).await?;
-        assert_eq!(reply, [0x05, 0x00, 0x00]);
+        assert_eq!(reply, [0x05, expected_status, 0x00]);
         Ok(())
     }
 
@@ -857,12 +970,44 @@ mod tests {
         Ok((addr, task))
     }
 
+    async fn spawn_tun_socks_inbound(
+        router: Router,
+        max_connections: usize,
+    ) -> Result<(SocketAddr, tokio::task::JoinHandle<()>)> {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+        let addr = listener.local_addr()?;
+        let task = tokio::spawn(async move {
+            let _ = serve_tun_listener_with_connection_limit(
+                "tun-in".to_string(),
+                listener,
+                router,
+                max_connections,
+            )
+            .await;
+        });
+
+        Ok((addr, task))
+    }
+
     fn direct_router() -> Router {
         Router::from_config(
             &[OutboundConfig::Direct {
                 tag: "direct".to_string(),
             }],
             &RouteConfig::default(),
+        )
+        .unwrap()
+    }
+
+    fn direct_router_with_metrics(metrics: std::sync::Arc<RuntimeMetrics>) -> Router {
+        Router::from_config_with_dns_in_dir_and_metrics(
+            &[OutboundConfig::Direct {
+                tag: "direct".to_string(),
+            }],
+            &RouteConfig::default(),
+            None,
+            None,
+            Some(metrics),
         )
         .unwrap()
     }

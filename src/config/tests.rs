@@ -665,6 +665,9 @@ fn default_local_config_uses_non_clash_proxy_port() {
             ipv6_enabled,
             dns,
             bypass,
+            tcp_timeout_seconds,
+            udp_timeout_seconds,
+            max_sessions,
             ..
         } => {
             assert_eq!(tag, "tun-in");
@@ -673,6 +676,9 @@ fn default_local_config_uses_non_clash_proxy_port() {
             assert!(!*ipv6_enabled);
             assert_eq!(*dns, TunDnsMode::Virtual);
             assert!(bypass.iter().any(|cidr| cidr == "127.0.0.0/8"));
+            assert_eq!(*tcp_timeout_seconds, Some(DEFAULT_TUN_TCP_TIMEOUT_SECONDS));
+            assert_eq!(*udp_timeout_seconds, Some(DEFAULT_TUN_UDP_TIMEOUT_SECONDS));
+            assert_eq!(*max_sessions, Some(DEFAULT_TUN_MAX_SESSIONS));
         }
         other => panic!("unexpected default TUN inbound: {other:?}"),
     }
@@ -681,6 +687,39 @@ fn default_local_config_uses_non_clash_proxy_port() {
     assert_eq!(Config::default_local_listen_port(), 17890);
     config.validate().unwrap();
     crate::inbound::validate_configs(&config.inbounds).unwrap();
+}
+
+#[test]
+fn config_load_normalizes_legacy_tun_tcp_timeout() {
+    let path = temp_config_path("tabbymew-config-legacy-tun-timeout", "config.json");
+    let config = Config {
+        inbounds: vec![InboundConfig::Tun {
+            tag: "tun-in".to_string(),
+            interface_name: None,
+            mtu: default_tun_mtu(),
+            auto_route: true,
+            ipv6_enabled: false,
+            dns: TunDnsMode::Virtual,
+            dns_addr: None,
+            bypass: default_tun_bypass(),
+            tcp_timeout_seconds: Some(LEGACY_DEFAULT_TUN_TCP_TIMEOUT_SECONDS),
+            udp_timeout_seconds: Some(DEFAULT_TUN_UDP_TIMEOUT_SECONDS),
+            max_sessions: Some(DEFAULT_TUN_MAX_SESSIONS),
+        }],
+        ..base_config()
+    };
+    std::fs::write(&path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+
+    let loaded = Config::load(&path).unwrap();
+    let InboundConfig::Tun {
+        tcp_timeout_seconds,
+        ..
+    } = &loaded.inbounds[0]
+    else {
+        panic!("expected TUN inbound");
+    };
+
+    assert_eq!(*tcp_timeout_seconds, Some(DEFAULT_TUN_TCP_TIMEOUT_SECONDS));
 }
 
 #[test]

@@ -64,7 +64,7 @@ impl Outbound for DirectOutbound {
         let stream = match &dest.address {
             Address::Ip(ip) => {
                 let addr = SocketAddr::new(*ip, dest.port);
-                ensure_direct_addr_supported(addr)
+                ensure_direct_addr_supported(addr, session.rejects_local_direct_destinations())
                     .with_context(|| format!("failed to connect {dest} directly"))?;
                 timeout::connect_socket(addr, &format!("connecting direct destination {dest}"))
                     .await
@@ -75,6 +75,12 @@ impl Outbound for DirectOutbound {
                     .resolved_destination_addrs()
                     .and_then(usable_direct_addrs_only)
                 {
+                    let addrs = filter_tun_guarded_direct_addrs(
+                        domain,
+                        dest.port,
+                        addrs,
+                        session.rejects_local_direct_destinations(),
+                    )?;
                     connect_happy_eyeballs(
                         addrs,
                         format!("connecting direct destination {domain}:{}", dest.port),
@@ -83,13 +89,22 @@ impl Outbound for DirectOutbound {
                     .await
                     .with_context(|| format!("failed to connect {dest} directly"))?
                 } else if let Some(dns) = &self.dns {
-                    connect_resolved(dns, domain, dest.port)
-                        .await
-                        .with_context(|| format!("failed to connect {dest} directly"))?
+                    connect_resolved(
+                        dns,
+                        domain,
+                        dest.port,
+                        session.rejects_local_direct_destinations(),
+                    )
+                    .await
+                    .with_context(|| format!("failed to connect {dest} directly"))?
                 } else {
-                    connect_system_resolved(domain, dest.port)
-                        .await
-                        .with_context(|| format!("failed to connect {dest} directly"))?
+                    connect_system_resolved(
+                        domain,
+                        dest.port,
+                        session.rejects_local_direct_destinations(),
+                    )
+                    .await
+                    .with_context(|| format!("failed to connect {dest} directly"))?
                 }
             }
         };
@@ -115,12 +130,13 @@ impl Outbound for DirectOutbound {
                 Address::Domain(_) => None,
             });
         if let Some(remote_addr) = remote_addr {
-            ensure_direct_addr_supported(remote_addr).with_context(|| {
-                format!(
-                    "direct UDP destination {} is not usable",
-                    session.destination
-                )
-            })?;
+            ensure_direct_addr_supported(remote_addr, session.rejects_local_direct_destinations())
+                .with_context(|| {
+                    format!(
+                        "direct UDP destination {} is not usable",
+                        session.destination
+                    )
+                })?;
         }
         let socket =
             timeout::bind_udp_socket_for_remote_addr(bind_addr, remote_addr, "direct UDP socket")
@@ -136,6 +152,7 @@ async fn connect_resolved(
     dns: &DnsResolver,
     domain: &str,
     port: u16,
+    reject_local_direct_destinations: bool,
 ) -> std::io::Result<TcpStream> {
     let looked_up = dns
         .lookup(domain, port)
@@ -143,6 +160,8 @@ async fn connect_resolved(
         .map_err(std::io::Error::other)?;
     let addrs = usable_direct_addrs_only(looked_up.clone())
         .ok_or_else(|| direct_no_usable_addrs_error(domain, port, &looked_up))?;
+    let addrs =
+        filter_tun_guarded_direct_addrs(domain, port, addrs, reject_local_direct_destinations)?;
     connect_happy_eyeballs(
         addrs,
         format!("connecting direct destination {domain}:{port}"),
@@ -151,7 +170,11 @@ async fn connect_resolved(
     .await
 }
 
-async fn connect_system_resolved(domain: &str, port: u16) -> std::io::Result<TcpStream> {
+async fn connect_system_resolved(
+    domain: &str,
+    port: u16,
+    reject_local_direct_destinations: bool,
+) -> std::io::Result<TcpStream> {
     let addrs = timeout::resolve_direct_host_with_dns(
         domain,
         port,
@@ -162,6 +185,8 @@ async fn connect_system_resolved(domain: &str, port: u16) -> std::io::Result<Tcp
     .map_err(io::Error::other)?;
     let addrs = usable_direct_addrs_only(addrs.clone())
         .ok_or_else(|| direct_no_usable_addrs_error(domain, port, &addrs))?;
+    let addrs =
+        filter_tun_guarded_direct_addrs(domain, port, addrs, reject_local_direct_destinations)?;
     connect_happy_eyeballs(
         addrs,
         format!("connecting direct destination {domain}:{port}"),
@@ -274,10 +299,20 @@ async fn resolve_udp_destination(
     };
 
     let addr = if let Some(addrs) = session.resolved_destination_addrs() {
-        first_usable_direct_addr_or_error(domain, destination.port, addrs)?
+        first_usable_direct_addr_or_error(
+            domain,
+            destination.port,
+            addrs,
+            session.rejects_local_direct_destinations(),
+        )?
     } else if let Some(dns) = dns {
         let looked_up = dns.lookup(domain, destination.port).await?;
-        first_usable_direct_addr_or_error(domain, destination.port, looked_up)?
+        first_usable_direct_addr_or_error(
+            domain,
+            destination.port,
+            looked_up,
+            session.rejects_local_direct_destinations(),
+        )?
     } else {
         let looked_up = timeout::resolve_direct_host_with_dns(
             domain,
@@ -286,9 +321,14 @@ async fn resolve_udp_destination(
             &format!("resolving UDP destination {destination}"),
         )
         .await?;
-        first_usable_direct_addr_or_error(domain, destination.port, looked_up)?
+        first_usable_direct_addr_or_error(
+            domain,
+            destination.port,
+            looked_up,
+            session.rejects_local_direct_destinations(),
+        )?
     };
-    ensure_direct_addr_supported(addr)
+    ensure_direct_addr_supported(addr, session.rejects_local_direct_destinations())
         .with_context(|| format!("UDP destination {destination} did not resolve"))?;
     Ok(Some(ResolvedUdpDestination {
         destination: destination.clone(),
@@ -300,18 +340,28 @@ fn first_usable_direct_addr_or_error(
     domain: &str,
     port: u16,
     addrs: Vec<SocketAddr>,
+    reject_local_direct_destinations: bool,
 ) -> Result<SocketAddr> {
-    usable_direct_addrs_only(addrs.clone())
-        .with_context(|| direct_no_usable_addrs_error(domain, port, &addrs).to_string())?
+    let usable = usable_direct_addrs_only(addrs.clone())
+        .with_context(|| direct_no_usable_addrs_error(domain, port, &addrs).to_string())?;
+    filter_tun_guarded_direct_addrs(domain, port, usable, reject_local_direct_destinations)?
         .into_iter()
         .next()
         .with_context(|| format!("DNS lookup for {domain}:{port} returned no usable addresses"))
 }
 
-fn ensure_direct_addr_supported(addr: SocketAddr) -> io::Result<()> {
+fn ensure_direct_addr_supported(
+    addr: SocketAddr,
+    reject_local_direct_destinations: bool,
+) -> io::Result<()> {
     if is_tun_virtual_ip(addr.ip()) {
         return Err(io::Error::other(format!(
             "direct destination {addr} is a TUN fake-IP address; virtual DNS mapping may be stale or direct routing bypassed the TUN DNS mapper"
+        )));
+    }
+    if reject_local_direct_destinations && crate::net::address::is_local_or_private_ip(addr.ip()) {
+        return Err(io::Error::other(format!(
+            "direct destination {addr} is local/private and was received from a protected TUN inbound"
         )));
     }
     if egress::remote_addr_supported(addr) {
@@ -320,6 +370,29 @@ fn ensure_direct_addr_supported(addr: SocketAddr) -> io::Result<()> {
         Err(io::Error::other(format!(
             "direct destination {addr} is not usable through the bound egress interface"
         )))
+    }
+}
+
+fn filter_tun_guarded_direct_addrs(
+    domain: &str,
+    port: u16,
+    addrs: Vec<SocketAddr>,
+    reject_local_direct_destinations: bool,
+) -> io::Result<Vec<SocketAddr>> {
+    if !reject_local_direct_destinations {
+        return Ok(addrs);
+    }
+    let public_addrs = addrs
+        .iter()
+        .copied()
+        .filter(|addr| !crate::net::address::is_local_or_private_ip(addr.ip()))
+        .collect::<Vec<_>>();
+    if public_addrs.is_empty() {
+        Err(io::Error::other(format!(
+            "direct destination {domain}:{port} resolved only to local/private addresses from a protected TUN inbound"
+        )))
+    } else {
+        Ok(public_addrs)
     }
 }
 
@@ -484,10 +557,40 @@ mod tests {
     #[test]
     fn direct_fake_ip_errors_are_diagnostic() {
         let fake = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(198, 18, 0, 1)), 443);
-        let err = ensure_direct_addr_supported(fake).unwrap_err().to_string();
+        let err = ensure_direct_addr_supported(fake, false)
+            .unwrap_err()
+            .to_string();
 
         assert!(err.contains("fake-IP"));
         assert!(err.contains("virtual DNS mapping"));
+    }
+
+    #[test]
+    fn protected_tun_direct_addresses_reject_local_private_targets() {
+        let private = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 28, 10, 67)), 49735);
+        let public = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 443);
+
+        let err = ensure_direct_addr_supported(private, true)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("local/private"));
+        assert!(ensure_direct_addr_supported(public, true).is_ok());
+    }
+
+    #[test]
+    fn protected_tun_direct_addresses_filter_resolved_local_private_targets() {
+        let private = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 28, 10, 67)), 49735);
+        let public = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 443);
+
+        assert_eq!(
+            filter_tun_guarded_direct_addrs("example.com", 443, vec![private, public], true)
+                .unwrap(),
+            vec![public]
+        );
+        let err = filter_tun_guarded_direct_addrs("example.com", 443, vec![private], true)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("local/private"));
     }
 
     #[test]

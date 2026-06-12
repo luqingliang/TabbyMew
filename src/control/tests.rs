@@ -40,6 +40,9 @@ mod tests {
         );
         metrics.record_proxied_upload(123);
         metrics.record_proxied_download(456);
+        let activity = metrics.track_tcp_connection("hybrid-in");
+        activity.record_outbound("http-out");
+        metrics.record_tcp_connection_limit_reached("SOCKS inbound tun-in");
         let state = ControlState::new(summary(), metrics);
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
@@ -65,6 +68,16 @@ mod tests {
         assert_eq!(counters["proxied_upload_bytes"], 123);
         assert_eq!(counters["proxied_download_bytes"], 456);
         assert_eq!(counters["proxied_total_bytes"], 579);
+        assert_eq!(counters["active_tcp_connections_total"], 1);
+        assert_eq!(counters["active_tcp_connections_max"], 1);
+        assert!(counters["active_tcp_connection_oldest_age_seconds"].is_number());
+        assert_eq!(counters["active_tcp_connections_by_inbound"]["hybrid-in"], 1);
+        assert_eq!(counters["active_tcp_connections_by_outbound"]["http-out"], 1);
+        assert_eq!(counters["tcp_connection_limit_reached_total"], 1);
+        assert_eq!(
+            counters["tcp_connection_limit_reached_by_context"]["SOCKS inbound tun-in"],
+            1
+        );
 
         task.abort();
         Ok(())

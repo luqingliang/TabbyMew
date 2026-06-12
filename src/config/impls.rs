@@ -5,8 +5,25 @@ impl Config {
         let path = path.as_ref();
         let text = fs::read_to_string(path)
             .with_context(|| format!("failed to read config {}", path.display()))?;
-        serde_json::from_str(&text)
-            .with_context(|| format!("failed to parse JSON config {}", path.display()))
+        let mut config: Self = serde_json::from_str(&text)
+            .with_context(|| format!("failed to parse JSON config {}", path.display()))?;
+        config.normalize_legacy_defaults();
+        Ok(config)
+    }
+
+    fn normalize_legacy_defaults(&mut self) {
+        for inbound in &mut self.inbounds {
+            let InboundConfig::Tun {
+                tcp_timeout_seconds,
+                ..
+            } = inbound
+            else {
+                continue;
+            };
+            if *tcp_timeout_seconds == Some(LEGACY_DEFAULT_TUN_TCP_TIMEOUT_SECONDS) {
+                *tcp_timeout_seconds = Some(DEFAULT_TUN_TCP_TIMEOUT_SECONDS);
+            }
+        }
     }
 
     pub fn summary(&self) -> ConfigSummary {
@@ -212,9 +229,9 @@ impl Config {
             dns: TunDnsMode::Virtual,
             dns_addr: None,
             bypass: default_tun_bypass(),
-            tcp_timeout_seconds: Some(600),
-            udp_timeout_seconds: Some(10),
-            max_sessions: Some(1024),
+            tcp_timeout_seconds: Some(DEFAULT_TUN_TCP_TIMEOUT_SECONDS),
+            udp_timeout_seconds: Some(DEFAULT_TUN_UDP_TIMEOUT_SECONDS),
+            max_sessions: Some(DEFAULT_TUN_MAX_SESSIONS),
         }
     }
 

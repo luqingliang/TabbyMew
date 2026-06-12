@@ -1,27 +1,88 @@
 #[derive(Debug)]
 pub struct RuntimeMetrics {
     started_at: Instant,
+    next_tcp_connection_id: AtomicU64,
+    active_tcp_connections_total: AtomicU64,
+    active_tcp_connections_max: AtomicU64,
+    tcp_connection_limit_reached_total: AtomicU64,
     route_selections_total: AtomicU64,
     route_tcp: AtomicU64,
     route_udp: AtomicU64,
     proxied_upload_bytes: AtomicU64,
     proxied_download_bytes: AtomicU64,
+    active_tcp_connections: Mutex<BTreeMap<u64, ActiveTcpConnection>>,
+    active_tcp_by_inbound: Mutex<BTreeMap<String, u64>>,
+    active_tcp_by_outbound: Mutex<BTreeMap<String, u64>>,
+    tcp_connection_limit_reached_by_context: Mutex<BTreeMap<String, u64>>,
     route_by_inbound: Mutex<BTreeMap<String, u64>>,
     route_by_outbound: Mutex<BTreeMap<String, u64>>,
+}
+
+#[derive(Debug)]
+struct ActiveTcpConnection {
+    started_at: Instant,
+    inbound_tag: String,
+    outbound_tag: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct TcpConnectionActivity {
+    metrics: Arc<RuntimeMetrics>,
+    id: u64,
 }
 
 impl RuntimeMetrics {
     pub fn new() -> Self {
         Self {
             started_at: Instant::now(),
+            next_tcp_connection_id: AtomicU64::new(1),
+            active_tcp_connections_total: AtomicU64::new(0),
+            active_tcp_connections_max: AtomicU64::new(0),
+            tcp_connection_limit_reached_total: AtomicU64::new(0),
             route_selections_total: AtomicU64::new(0),
             route_tcp: AtomicU64::new(0),
             route_udp: AtomicU64::new(0),
             proxied_upload_bytes: AtomicU64::new(0),
             proxied_download_bytes: AtomicU64::new(0),
+            active_tcp_connections: Mutex::new(BTreeMap::new()),
+            active_tcp_by_inbound: Mutex::new(BTreeMap::new()),
+            active_tcp_by_outbound: Mutex::new(BTreeMap::new()),
+            tcp_connection_limit_reached_by_context: Mutex::new(BTreeMap::new()),
             route_by_inbound: Mutex::new(BTreeMap::new()),
             route_by_outbound: Mutex::new(BTreeMap::new()),
         }
+    }
+
+    pub fn track_tcp_connection(self: &Arc<Self>, inbound_tag: &str) -> TcpConnectionActivity {
+        let id = self.next_tcp_connection_id.fetch_add(1, Ordering::Relaxed);
+        self.active_tcp_connections
+            .lock()
+            .expect("active_tcp_connections metrics mutex must not be poisoned")
+            .insert(
+                id,
+                ActiveTcpConnection {
+                    started_at: Instant::now(),
+                    inbound_tag: inbound_tag.to_string(),
+                    outbound_tag: None,
+                },
+            );
+        increment_counter(&self.active_tcp_by_inbound, inbound_tag);
+        let active = self
+            .active_tcp_connections_total
+            .fetch_add(1, Ordering::Relaxed)
+            .saturating_add(1);
+        update_atomic_max(&self.active_tcp_connections_max, active);
+
+        TcpConnectionActivity {
+            metrics: self.clone(),
+            id,
+        }
+    }
+
+    pub fn record_tcp_connection_limit_reached(&self, context: &str) {
+        self.tcp_connection_limit_reached_total
+            .fetch_add(1, Ordering::Relaxed);
+        increment_counter(&self.tcp_connection_limit_reached_by_context, context);
     }
 
     pub fn record_route(&self, session: &Session, outbound_tag: &str) {
@@ -39,6 +100,46 @@ impl RuntimeMetrics {
         increment_counter(&self.route_by_outbound, outbound_tag);
     }
 
+    fn record_tcp_connection_outbound(&self, id: u64, outbound_tag: &str) {
+        let previous = {
+            let mut active = self
+                .active_tcp_connections
+                .lock()
+                .expect("active_tcp_connections metrics mutex must not be poisoned");
+            let Some(connection) = active.get_mut(&id) else {
+                return;
+            };
+            connection.outbound_tag.replace(outbound_tag.to_string())
+        };
+        if previous.as_deref() == Some(outbound_tag) {
+            return;
+        }
+        if let Some(previous) = previous {
+            decrement_counter(&self.active_tcp_by_outbound, &previous);
+        }
+        increment_counter(&self.active_tcp_by_outbound, outbound_tag);
+    }
+
+    fn finish_tcp_connection(&self, id: u64) {
+        let Some(connection) = self
+            .active_tcp_connections
+            .lock()
+            .expect("active_tcp_connections metrics mutex must not be poisoned")
+            .remove(&id)
+        else {
+            return;
+        };
+        self.active_tcp_connections_total
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |active| {
+                Some(active.saturating_sub(1))
+            })
+            .ok();
+        decrement_counter(&self.active_tcp_by_inbound, &connection.inbound_tag);
+        if let Some(outbound_tag) = connection.outbound_tag {
+            decrement_counter(&self.active_tcp_by_outbound, &outbound_tag);
+        }
+    }
+
     pub fn record_proxied_upload(&self, bytes: u64) {
         self.proxied_upload_bytes
             .fetch_add(bytes, Ordering::Relaxed);
@@ -52,14 +153,44 @@ impl RuntimeMetrics {
     pub fn snapshot(&self) -> CountersSnapshot {
         let proxied_upload_bytes = self.proxied_upload_bytes.load(Ordering::Relaxed);
         let proxied_download_bytes = self.proxied_download_bytes.load(Ordering::Relaxed);
+        let active_tcp_connection_oldest_age_seconds = self
+            .active_tcp_connections
+            .lock()
+            .expect("active_tcp_connections metrics mutex must not be poisoned")
+            .values()
+            .map(|connection| connection.started_at.elapsed().as_secs())
+            .max();
         CountersSnapshot {
             uptime_seconds: self.started_at.elapsed().as_secs(),
+            active_tcp_connections_total: self
+                .active_tcp_connections_total
+                .load(Ordering::Relaxed),
+            active_tcp_connections_max: self.active_tcp_connections_max.load(Ordering::Relaxed),
+            active_tcp_connection_oldest_age_seconds,
+            tcp_connection_limit_reached_total: self
+                .tcp_connection_limit_reached_total
+                .load(Ordering::Relaxed),
             route_selections_total: self.route_selections_total.load(Ordering::Relaxed),
             route_selections_tcp: self.route_tcp.load(Ordering::Relaxed),
             route_selections_udp: self.route_udp.load(Ordering::Relaxed),
             proxied_upload_bytes,
             proxied_download_bytes,
             proxied_total_bytes: proxied_upload_bytes.saturating_add(proxied_download_bytes),
+            active_tcp_connections_by_inbound: self
+                .active_tcp_by_inbound
+                .lock()
+                .expect("active_tcp_by_inbound metrics mutex must not be poisoned")
+                .clone(),
+            active_tcp_connections_by_outbound: self
+                .active_tcp_by_outbound
+                .lock()
+                .expect("active_tcp_by_outbound metrics mutex must not be poisoned")
+                .clone(),
+            tcp_connection_limit_reached_by_context: self
+                .tcp_connection_limit_reached_by_context
+                .lock()
+                .expect("tcp_connection_limit_reached_by_context metrics mutex must not be poisoned")
+                .clone(),
             route_selections_by_inbound: self
                 .route_by_inbound
                 .lock()
@@ -74,6 +205,41 @@ impl RuntimeMetrics {
     }
 }
 
+impl TcpConnectionActivity {
+    pub fn record_outbound(&self, outbound_tag: &str) {
+        self.metrics
+            .record_tcp_connection_outbound(self.id, outbound_tag);
+    }
+}
+
+impl Drop for TcpConnectionActivity {
+    fn drop(&mut self) {
+        self.metrics.finish_tcp_connection(self.id);
+    }
+}
+
+fn update_atomic_max(max: &AtomicU64, value: u64) {
+    let mut current = max.load(Ordering::Relaxed);
+    while value > current {
+        match max.compare_exchange(current, value, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(next) => current = next,
+        }
+    }
+}
+
+fn decrement_counter(counters: &Mutex<BTreeMap<String, u64>>, key: &str) {
+    let mut counters = counters
+        .lock()
+        .expect("runtime metrics mutex must not be poisoned");
+    if let Some(value) = counters.get_mut(key) {
+        *value = value.saturating_sub(1);
+        if *value == 0 {
+            counters.remove(key);
+        }
+    }
+}
+
 impl Default for RuntimeMetrics {
     fn default() -> Self {
         Self::new()
@@ -83,12 +249,19 @@ impl Default for RuntimeMetrics {
 #[derive(Debug, Clone, Serialize)]
 pub struct CountersSnapshot {
     pub uptime_seconds: u64,
+    pub active_tcp_connections_total: u64,
+    pub active_tcp_connections_max: u64,
+    pub active_tcp_connection_oldest_age_seconds: Option<u64>,
+    pub tcp_connection_limit_reached_total: u64,
     pub route_selections_total: u64,
     pub route_selections_tcp: u64,
     pub route_selections_udp: u64,
     pub proxied_upload_bytes: u64,
     pub proxied_download_bytes: u64,
     pub proxied_total_bytes: u64,
+    pub active_tcp_connections_by_inbound: BTreeMap<String, u64>,
+    pub active_tcp_connections_by_outbound: BTreeMap<String, u64>,
+    pub tcp_connection_limit_reached_by_context: BTreeMap<String, u64>,
     pub route_selections_by_inbound: BTreeMap<String, u64>,
     pub route_selections_by_outbound: BTreeMap<String, u64>,
 }

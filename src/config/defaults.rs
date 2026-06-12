@@ -151,6 +151,11 @@ pub(super) fn default_tun_mtu() -> u16 {
     1500
 }
 
+pub(crate) const DEFAULT_TUN_TCP_TIMEOUT_SECONDS: u64 = 180;
+pub(crate) const LEGACY_DEFAULT_TUN_TCP_TIMEOUT_SECONDS: u64 = 600;
+pub(crate) const DEFAULT_TUN_UDP_TIMEOUT_SECONDS: u64 = 10;
+pub(crate) const DEFAULT_TUN_MAX_SESSIONS: usize = 1024;
+
 pub(crate) const TUN_LOCAL_BYPASS_CIDRS: &[&str] = &[
     "127.0.0.0/8",
     "10.0.0.0/8",

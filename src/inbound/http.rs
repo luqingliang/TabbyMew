@@ -71,6 +71,9 @@ pub async fn handle_tcp(
     auth: Option<HttpInboundAuth>,
     router: Router,
 ) -> Result<()> {
+    let activity = router
+        .runtime_metrics()
+        .map(|metrics| metrics.track_tcp_connection(&tag));
     let head = read_http_head(&mut inbound).await?;
     let head_text = std::str::from_utf8(&head).context("HTTP request header is not valid UTF-8")?;
     let mut lines = head_text.split("\r\n");
@@ -107,6 +110,9 @@ pub async fn handle_tcp(
                 return Err(err);
             }
         };
+        if let Some(activity) = &activity {
+            activity.record_outbound(outbound.tag());
+        }
         let mut outbound_stream = match outbound.connect(&session).await {
             Ok(stream) => stream,
             Err(err) => {
@@ -163,6 +169,9 @@ pub async fn handle_tcp(
             return Err(err);
         }
     };
+    if let Some(activity) = &activity {
+        activity.record_outbound(outbound.tag());
+    }
     let mut outbound_stream = match outbound.connect(&session).await {
         Ok(stream) => stream,
         Err(err) => {

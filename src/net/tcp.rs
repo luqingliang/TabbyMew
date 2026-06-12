@@ -75,6 +75,24 @@ impl ConnectionLimiter {
         }
         self.semaphore.clone().acquire_owned().await.ok()
     }
+
+    pub fn try_acquire(&self) -> Option<OwnedSemaphorePermit> {
+        match self.semaphore.clone().try_acquire_owned() {
+            Ok(permit) => Some(permit),
+            Err(_) => {
+                warn!(
+                    context = %self.context,
+                    max = self.max,
+                    "inbound connection limit reached; closing accepted connection"
+                );
+                None
+            }
+        }
+    }
+
+    pub fn context(&self) -> &str {
+        &self.context
+    }
 }
 
 pub async fn relay_until_first_eof<L, R>(left: &mut L, right: &mut R) -> io::Result<()>

@@ -661,6 +661,10 @@ impl Router {
         }
     }
 
+    pub fn runtime_metrics(&self) -> Option<Arc<RuntimeMetrics>> {
+        self.inner.metrics.clone()
+    }
+
     pub(crate) fn dns_resolver(&self) -> Option<Arc<DnsResolver>> {
         self.inner.dns.clone()
     }

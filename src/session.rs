@@ -12,6 +12,7 @@ pub struct Session {
     pub destination: Destination,
     pub network: Network,
     resolved_destination: Arc<Mutex<Option<ResolvedDestination>>>,
+    reject_local_direct_destinations: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +33,7 @@ impl Session {
             destination,
             network: Network::Tcp,
             resolved_destination: Arc::new(Mutex::new(None)),
+            reject_local_direct_destinations: false,
         }
     }
 
@@ -46,7 +48,17 @@ impl Session {
             destination,
             network: Network::Udp,
             resolved_destination: Arc::new(Mutex::new(None)),
+            reject_local_direct_destinations: false,
         }
+    }
+
+    pub fn with_reject_local_direct_destinations(mut self, enabled: bool) -> Self {
+        self.reject_local_direct_destinations = enabled;
+        self
+    }
+
+    pub fn rejects_local_direct_destinations(&self) -> bool {
+        self.reject_local_direct_destinations
     }
 
     pub fn resolved_destination_addrs(&self) -> Option<Vec<SocketAddr>> {
