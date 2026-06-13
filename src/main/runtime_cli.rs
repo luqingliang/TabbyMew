@@ -167,11 +167,12 @@ async fn run_tun_command(config: Option<&PathBuf>, command: TunCommand) -> Resul
                 }
                 CliSwitchAction::Status => unreachable!(),
             };
-            let response = runtime_post_control_json(
+            let response = runtime_post_control_json_with_timeout(
                 config,
                 &command.control,
                 "/control/api/tun",
                 serde_json::json!({ "enabled": enabled }),
+                tun_control_operation_timeout(timeout_duration(command.control.timeout_ms)?),
             )
             .await?;
             if command.json {
@@ -249,7 +250,24 @@ async fn runtime_post_control_json(
     path: &str,
     body: Value,
 ) -> Result<Value> {
-    let client = runtime_control_client(config, control)?;
+    runtime_post_control_json_with_timeout(
+        config,
+        control,
+        path,
+        body,
+        timeout_duration(control.timeout_ms)?,
+    )
+    .await
+}
+
+async fn runtime_post_control_json_with_timeout(
+    config: Option<&PathBuf>,
+    control: &RuntimeControlOptions,
+    path: &str,
+    body: Value,
+    timeout: Duration,
+) -> Result<Value> {
+    let client = runtime_control_client_with_timeout(config, control, timeout)?;
     let token = control_token_for_state_dir(control.state_dir.as_deref())?;
     client.post_json(path, &token, &body).await
 }
@@ -258,11 +276,16 @@ fn runtime_control_client(
     config: Option<&PathBuf>,
     control: &RuntimeControlOptions,
 ) -> Result<ControlClient> {
+    runtime_control_client_with_timeout(config, control, timeout_duration(control.timeout_ms)?)
+}
+
+fn runtime_control_client_with_timeout(
+    config: Option<&PathBuf>,
+    control: &RuntimeControlOptions,
+    timeout: Duration,
+) -> Result<ControlClient> {
     let listen = resolve_runtime_control_listen(config, control)?;
-    Ok(ControlClient::new(
-        listen,
-        timeout_duration(control.timeout_ms)?,
-    ))
+    Ok(ControlClient::new(listen, timeout))
 }
 
 fn resolve_runtime_control_listen(

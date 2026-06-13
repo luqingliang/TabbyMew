@@ -214,6 +214,18 @@ fn parses_cli_runtime_commands() -> Result<()> {
 }
 
 #[test]
+fn tun_control_operation_timeout_keeps_authorization_window_open() {
+    assert_eq!(
+        tun_control_operation_timeout(Duration::from_millis(DEFAULT_CONTROL_TIMEOUT_MS)),
+        TUN_CONTROL_OPERATION_TIMEOUT
+    );
+    assert_eq!(
+        tun_control_operation_timeout(Duration::from_secs(180)),
+        Duration::from_secs(180)
+    );
+}
+
+#[test]
 fn parses_cli_subscription_json_flags() -> Result<()> {
     let cli = Cli::try_parse_from([
         "TabbyMew",

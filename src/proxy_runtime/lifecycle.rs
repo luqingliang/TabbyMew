@@ -370,6 +370,7 @@ impl ProxyRuntime {
                 }
             }
         }
+        refresh_tun_dns_state_after_transition(&self.router, "TUN start").await;
         Ok(self.snapshot().await)
     }
 
@@ -405,15 +406,58 @@ impl ProxyRuntime {
                 "TUN listeners stopped"
             );
         }
-        flush_system_dns_cache_after_tun_stop().await;
+        refresh_tun_dns_state_after_transition(&self.router, "TUN stop").await;
         Ok(self.snapshot().await)
     }
 }
 
-async fn flush_system_dns_cache_after_tun_stop() {
-    match platform::flush_system_dns_cache().await {
-        Ok(true) => debug!("system DNS cache flushed after TUN stop"),
+async fn refresh_tun_dns_state_after_transition(router: &Router, context: &'static str) {
+    match router.clear_dns_cache().await {
+        Some(removed) => info!(
+            context,
+            removed_entries = removed,
+            "cleared resolver DNS cache for TUN transition"
+        ),
+        None => debug!(
+            context,
+            "no configured resolver DNS cache to clear for TUN transition"
+        ),
+    }
+    flush_system_dns_cache_after_tun_transition(context).await;
+}
+
+async fn flush_system_dns_cache_after_tun_transition(context: &'static str) {
+    match tun::flush_system_dns_cache_with_privileged_helper().await {
+        Ok(true) => {
+            info!(
+                context,
+                method = "privileged_helper",
+                "system DNS cache flushed for TUN transition"
+            );
+            return;
+        }
         Ok(false) => {}
-        Err(err) => warn!(error = %err, "failed to flush system DNS cache after TUN stop"),
+        Err(err) => warn!(
+            context,
+            error = %err,
+            "failed to flush system DNS cache through privileged TUN helper"
+        ),
+    }
+
+    match platform::flush_system_dns_cache().await {
+        Ok(true) => info!(
+            context,
+            method = "direct",
+            "system DNS cache flushed for TUN transition"
+        ),
+        Ok(false) => debug!(
+            context,
+            "system DNS cache flush is unsupported for TUN transition"
+        ),
+        Err(err) => warn!(
+            context,
+            error = %err,
+            "failed to flush system DNS cache for TUN transition"
+        ),
     }
 }

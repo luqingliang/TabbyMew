@@ -43,6 +43,11 @@ use tracing_subscriber::{EnvFilter, fmt::time::ChronoLocal};
 use tui::run_interactive_shell;
 
 const DEFAULT_CONTROL_TIMEOUT_MS: u64 = 1000;
+const TUN_CONTROL_OPERATION_TIMEOUT: Duration = Duration::from_secs(150);
+
+pub(crate) fn tun_control_operation_timeout(timeout: Duration) -> Duration {
+    timeout.max(TUN_CONTROL_OPERATION_TIMEOUT)
+}
 
 include!("main/cli.rs");
 

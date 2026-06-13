@@ -123,31 +123,18 @@ pub(crate) async fn tui_set_global_target(app: &mut TuiApp, target: &str) -> Res
 }
 
 pub(crate) async fn tui_set_tun_enabled(app: &mut TuiApp, enabled: bool) -> Result<String> {
-    app.refresh_status().await?;
-    let control = app
-        .status
-        .control_api
-        .as_ref()
-        .context("TabbyMew service is not running; run /restart before switching TUN")?;
-    if !control.healthy {
-        bail!(
-            "control API is unhealthy at http://{}: {}",
-            control.listen,
-            control.error.as_deref().unwrap_or("unknown error")
-        );
-    }
-    let listen = control::parse_listen(&control.listen)
-        .context("invalid control API listen address from local state")?;
-    let client = ControlClient::new(listen, app.session.timeout);
-    let token = tui_control_token(&app.session)?;
-    let response = client
-        .post_json(
-            "/control/api/tun",
-            &token,
-            &serde_json::json!({ "enabled": enabled }),
-        )
-        .await?;
-    app.refresh_status().await?;
+    let response = tui_post_control_json_with_timeout(
+        app,
+        "/control/api/tun",
+        serde_json::json!({ "enabled": enabled }),
+        if enabled {
+            "enabling TUN"
+        } else {
+            "disabling TUN"
+        },
+        crate::tun_control_operation_timeout(app.session.timeout),
+    )
+    .await?;
     Ok(format_tun_switch_output(&response, enabled))
 }
 

@@ -375,6 +375,7 @@ enum PrivilegedTunHelperCommandKind {
         tun2proxy_args: Vec<String>,
     },
     Stop,
+    FlushDns,
     Shutdown,
 }
 
@@ -516,6 +517,9 @@ async fn handle_privileged_helper_command(
             )
             .await?;
             result
+        }
+        PrivilegedTunHelperCommandKind::FlushDns => {
+            platform::flush_system_dns_cache().await.map(|_| ())
         }
         PrivilegedTunHelperCommandKind::Shutdown => {
             let result = stop_privileged_tun_runner(active).await;
@@ -679,6 +683,29 @@ pub async fn shutdown_privileged_helper_session() {
     }
 }
 
+pub async fn flush_system_dns_cache_with_privileged_helper() -> Result<bool> {
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        let session = {
+            let cached = privileged_tun_helper_session_cache().lock().await;
+            cached
+                .as_ref()
+                .filter(|session| session.is_alive())
+                .map(Arc::clone)
+        };
+        let Some(session) = session else {
+            return Ok(false);
+        };
+        session.flush_dns().await?;
+        Ok(true)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        Ok(false)
+    }
+}
+
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn privileged_tun_helper_session_cache()
 -> &'static tokio::sync::Mutex<Option<Arc<PrivilegedTunHelperSession>>> {
@@ -709,6 +736,9 @@ enum PrivilegedTunHelperRequest {
     },
     Stop {
         response: Option<oneshot::Sender<Result<()>>>,
+    },
+    FlushDns {
+        response: oneshot::Sender<Result<()>>,
     },
     Shutdown {
         response: Option<oneshot::Sender<Result<()>>>,
@@ -797,6 +827,24 @@ impl PrivilegedTunHelperSession {
         response_rx.await.with_context(|| {
             format!(
                 "{} privileged TUN helper session stopped before shutdown completed",
+                self.platform
+            )
+        })?
+    }
+
+    async fn flush_dns(&self) -> Result<()> {
+        let (response, response_rx) = oneshot::channel();
+        self.requests
+            .send(PrivilegedTunHelperRequest::FlushDns { response })
+            .with_context(|| {
+                format!(
+                    "{} privileged TUN helper session is not running",
+                    self.platform
+                )
+            })?;
+        response_rx.await.with_context(|| {
+            format!(
+                "{} privileged TUN helper session stopped before DNS flush completed",
                 self.platform
             )
         })?
@@ -1028,6 +1076,16 @@ async fn handle_privileged_helper_manager_request(
                 platform,
                 request_id = id,
                 "sent privileged TUN stop command"
+            );
+        }
+        PrivilegedTunHelperRequest::FlushDns { response } => {
+            send_privileged_helper_command(writer, id, PrivilegedTunHelperCommandKind::FlushDns)
+                .await?;
+            pending.insert(id, response);
+            debug!(
+                platform,
+                request_id = id,
+                "sent privileged TUN DNS flush command"
             );
         }
         PrivilegedTunHelperRequest::Shutdown { response } => {
@@ -2039,6 +2097,24 @@ mod tests {
     }
 
     #[test]
+    fn privileged_helper_flush_dns_command_is_machine_readable() {
+        let envelope = PrivilegedTunHelperEnvelope {
+            id: 8,
+            command: PrivilegedTunHelperCommandKind::FlushDns,
+        };
+
+        let json = serde_json::to_string(&envelope).unwrap();
+        assert!(json.contains("\"command\":\"flush_dns\""));
+
+        let decoded: PrivilegedTunHelperEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.id, 8);
+        assert!(matches!(
+            decoded.command,
+            PrivilegedTunHelperCommandKind::FlushDns
+        ));
+    }
+
+    #[test]
     fn privileged_helper_resource_limit_output_is_machine_readable() {
         let output = privileged_helper_resource_limit_output("test resource snapshot");
         let json = serde_json::to_string(&output).unwrap();
@@ -2116,6 +2192,42 @@ mod tests {
             )
             .await?;
         drop(lease);
+        fake_helper.await??;
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[tokio::test]
+    async fn privileged_helper_session_can_flush_dns_without_reauth() -> Result<()> {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+        let addr = listener.local_addr()?;
+        let client = TcpStream::connect(addr).await?;
+        let (server, _) = listener.accept().await?;
+        let (_process_exit_tx, process_exit_rx) = oneshot::channel();
+        let session = PrivilegedTunHelperSession::spawn("test", client, process_exit_rx);
+
+        let fake_helper = tokio::spawn(async move {
+            let (read_half, mut writer) = server.into_split();
+            let mut reader = BufReader::new(read_half);
+            let flush = read_test_helper_command(&mut reader).await?;
+            assert_eq!(flush.id, 1);
+            assert!(matches!(
+                flush.command,
+                PrivilegedTunHelperCommandKind::FlushDns
+            ));
+            write_privileged_helper_output(
+                &mut writer,
+                &PrivilegedTunHelperOutput::Response {
+                    id: flush.id,
+                    ok: true,
+                    error: None,
+                },
+            )
+            .await?;
+            Ok::<(), anyhow::Error>(())
+        });
+
+        session.flush_dns().await?;
         fake_helper.await??;
         Ok(())
     }

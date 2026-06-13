@@ -189,6 +189,13 @@ impl DnsResolver {
         self.servers.clone()
     }
 
+    pub async fn clear_cache(&self) -> usize {
+        let mut cache = self.cache.lock().await;
+        let removed = cache.len();
+        cache.clear();
+        removed
+    }
+
     async fn lookup_with_singleflight(&self, domain: &str) -> Result<DnsLookup> {
         let flight = {
             let mut in_flight = self.in_flight.lock().await;
@@ -843,6 +850,20 @@ mod tests {
         server_task.await?;
 
         assert_eq!(fresh, vec!["127.0.0.7:443".parse::<SocketAddr>().unwrap()]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn clear_cache_removes_cached_answers() -> Result<()> {
+        let resolver = DnsResolver::from_servers(&["127.0.0.1".to_string()], 5_000)?.unwrap();
+        let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        resolver
+            .cache_positive("example.test".to_string(), &[ip], 60)
+            .await;
+
+        assert_eq!(resolver.clear_cache().await, 1);
+        assert!(resolver.cached_lookup("example.test").await.is_none());
+        assert_eq!(resolver.clear_cache().await, 0);
         Ok(())
     }
 

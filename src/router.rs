@@ -669,6 +669,11 @@ impl Router {
         self.inner.dns.clone()
     }
 
+    pub(crate) async fn clear_dns_cache(&self) -> Option<usize> {
+        let dns = self.inner.dns.as_ref()?;
+        Some(dns.clear_cache().await)
+    }
+
     fn should_try_resolved_ip_cidr(&self, rule: &RouteRuleConfig, session: &Session) -> bool {
         self.inner.route.resolve_ip_cidr
             && !rule.ip_cidr.is_empty()
